@@ -50,6 +50,7 @@ window.VX = window.VX || {};
       id: "p" + nextPageId++,
       name: name || ("页面-" + nextPageId),
       size: { mode: "fixed", w: 800, h: 1100, orientation: "portrait" },
+      background: "#FFFFFF",  // 页面背景色
       guides: [],           // {dir:'v'|'h', pos} 世界坐标
       variables: [],
       layers: [{ id: "l1", name: "默认", visible: true, locked: false }],
@@ -151,6 +152,27 @@ window.VX = window.VX || {};
       emit("pagechange");
       emit("change");
       return true;
+    },
+    // 页面尺寸（px）：宽/高写入 size，横竖方向随之推导
+    setPageSize(w, h) {
+      const p = this.page();
+      if (!p) return;
+      if (!p.size) p.size = { mode: "fixed", w: 800, h: 1100 };
+      if (typeof w === "number" && isFinite(w) && w > 0) p.size.w = w;
+      if (typeof h === "number" && isFinite(h) && h > 0) p.size.h = h;
+      p.size.orientation = p.size.w > p.size.h ? "landscape" : "portrait";
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+    },
+    // 页面背景色：留空回落到白色
+    setPageBackground(color) {
+      const p = this.page();
+      if (!p) return;
+      p.background = color || "#FFFFFF";
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
     },
 
     // ---- 形状 ----

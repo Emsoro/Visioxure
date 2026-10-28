@@ -1,4 +1,4 @@
-// editor.js —— 编辑器胶水：输入事件 / 快捷键 / 页面页签 / 状态栏 / 标尺参考线创建（P1）
+// editor.js —— 编辑器胶水：输入事件 / 快捷键 / 页面树 / 排列工具条 / 状态栏 / 标尺参考线创建（P1）
 "use strict";
 
 (function () {
@@ -374,6 +374,7 @@
     const g = document.getElementById("status-grid");
     if (g) g.textContent = S().grid ? "网格 开" : "网格 关";
     syncToolButtons();
+    syncArrangeTools();
   }
 
   // ---------- P2：排列动作（组合/解组/布尔/对齐） ----------
@@ -397,23 +398,29 @@
     VX.Renderer.invalidate();
   }
 
-  // ---------- P2：排列菜单下拉 ----------
-  function bindMenus() {
-    const item = document.querySelector('[data-menu="arrange"]');
-    const drop = document.getElementById("menu-arrange");
-    if (!item || !drop) return;
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".menu-entry")) return;
-      drop.classList.toggle("hidden");
+  // ---------- P2：排列工具条（原「排列」菜单） ----------
+  // 组合/布尔/对齐至少需要 2 个对象；解组需要选中的是组合
+  function arrangeEnabled(act) {
+    const sel = S().selection;
+    if (act === "ungroup") {
+      return sel.some((id) => { const s = VX.Model.shape(id); return s && s.type === "group"; });
+    }
+    return sel.length >= 2;
+  }
+
+  function syncArrangeTools() {
+    document.querySelectorAll("#arrange-tools [data-arrange]").forEach((b) => {
+      b.style.opacity = arrangeEnabled(b.dataset.arrange) ? "1" : "0.35";
     });
-    drop.addEventListener("click", (e) => {
-      const entry = e.target.closest(".menu-entry");
-      if (!entry) return;
-      drop.classList.add("hidden");
-      arrange(entry.dataset.act);
-    });
-    document.addEventListener("mousedown", (e) => {
-      if (!item.contains(e.target)) drop.classList.add("hidden");
+  }
+
+  function bindArrangeTools() {
+    const box = document.getElementById("arrange-tools");
+    if (!box) return;
+    box.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-arrange]");
+      if (!btn || !arrangeEnabled(btn.dataset.arrange)) return;
+      arrange(btn.dataset.arrange);
     });
   }
 
@@ -503,7 +510,7 @@
       bindToolbar();
       bindPageTree();
       bindStatusbar();
-      bindMenus();
+      bindArrangeTools();
       bindLayers();
       bindRightPanelCollapse();
 

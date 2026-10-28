@@ -278,8 +278,8 @@ std::string DetectType(const std::string& userType, const XmlNode& shape, const 
     return "path";
 }
 
-// 页面尺寸在 pages.xml 的 Page/PageSheet 中；部分文件（含 Visioxure 自身）也在 pageN.xml 里冗余一份
-void ReadPageSize(const XmlNode& pageNode, double& w, double& h) {
+// 页面尺寸与背景色在 pages.xml 的 Page/PageSheet 中；部分文件（含 Visioxure 自身）也在 pageN.xml 里冗余一份
+void ReadPageSheet(const XmlNode& pageNode, double& w, double& h, std::string& bg) {
     const XmlNode* sheet = pageNode.child("PageSheet");
     if (!sheet) return;
     for (const XmlNode& c : sheet->children) {
@@ -287,6 +287,11 @@ void ReadPageSize(const XmlNode& pageNode, double& w, double& h) {
         std::string n = c.attr("N");
         if (n == "PageWidth") w = P2D(c.attr("V"), w / kPxPerInch) * kPxPerInch;
         if (n == "PageHeight") h = P2D(c.attr("V"), h / kPxPerInch) * kPxPerInch;
+        // 背景色：Visio 页面背景即 PageSheet 的填充色，仅接受十六进制色值
+        if (n == "FillForegnd") {
+            std::string v = c.attr("V");
+            if (!v.empty() && v[0] == '#') bg = v;
+        }
     }
 }
 
@@ -882,8 +887,11 @@ nlohmann::json ParsePage(const XmlNode& pageRoot, const std::string& pageName, d
             int numeric = static_cast<int>(P2D(sh->attr("ID"), 0));
             std::string nameU = sh->attr("NameU");
             std::string internal;
-            if (nameU.size() > 1 && nameU[0] == 's' &&
-                std::all_of(nameU.begin() + 1, nameU.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+            std::string stored = UserValue(*sh, "VXId");
+            if (!stored.empty()) {
+                internal = stored;  // Visioxure 自身文件：id 写在 User.VXId，原样恢复
+            } else if (nameU.size() > 1 && nameU[0] == 's' &&
+                       std::all_of(nameU.begin() + 1, nameU.end(), [](char c) { return c >= '0' && c <= '9'; })) {
                 internal = nameU;
             } else {
                 internal = "s" + std::to_string(numeric > 0 ? numeric : (static_cast<int>(idMap.size()) + 1));
@@ -1172,7 +1180,8 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
         }
 
         double pw = 800, ph = 1100;
-        ReadPageSize(*pageNode, pw, ph);   // 真实 Visio 文件只在 pages.xml 声明页面尺寸
+        std::string pageBg = "#FFFFFF";
+        ReadPageSheet(*pageNode, pw, ph, pageBg); // 真实 Visio 文件只在 pages.xml 声明页面属性
         nlohmann::json pageVars = nlohmann::json::array();
         ReadPageUserVars(*pageNode, pageVars, globalVars);
         nlohmann::json parsed = ParsePage(pageRoot, name, pw, ph, palette, styles, masters, warnings);
@@ -1181,6 +1190,7 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
             {"id", "p" + std::to_string(pages.size() + 1)},
             {"name", name},
             {"size", {{"mode", "fixed"}, {"w", pw}, {"h", ph}, {"orientation", pw > ph ? "landscape" : "portrait"}}},
+            {"background", pageBg},
             {"guides", nlohmann::json::array()},
             {"variables", pageVars},
             {"layers", parsed["layers"]},

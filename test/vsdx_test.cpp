@@ -49,11 +49,20 @@ json FindShape(const json& shapes, const std::string& id) {
     return json();
 }
 
+// 安全取子对象：字段缺失或类型不符时返回空对象（nlohmann 对 null 取值会抛异常，未捕获会中断整轮）
+const json& Obj(const json& o, const char* key) {
+    static const json kEmpty = json::object();
+    if (!o.is_object()) return kEmpty;
+    auto it = o.find(key);
+    return (it != o.end() && it->is_object()) ? *it : kEmpty;
+}
+
 json MakeDoc() {
     json page = {
         {"id", "p1"},
         {"name", "登录页"},
         {"size", {{"mode", "fixed"}, {"w", 800}, {"h", 1100}, {"orientation", "portrait"}}},
+        {"background", "#F2F6FC"},
         {"guides", json::array()},
         {"variables", json::array()},
         {"layers", json::array({{{"id", "l1"}, {"name", "默认"}, {"visible", true}, {"locked", false}}})},
@@ -160,6 +169,7 @@ json MakeBasicDoc() {
     json p1 = {
         {"id", "p1"}, {"name", "A&B <1> 页"},
         {"size", {{"mode", "fixed"}, {"w", 600}, {"h", 400}, {"orientation", "landscape"}}},
+        {"background", "#EAF2FF"},
         {"guides", json::array()},
         {"variables", json::array({{{"name", "用户名"}, {"value", "张&三"}, {"scope", "page"}}})},
         {"layers", json::array()},
@@ -251,21 +261,13 @@ void RunBasicScenarios() {
     }
     Check(parsed["pages"].size() == 3, "页面数 = 3");
     Check(parsed["pages"][0].value("name", "") == "A&B <1> 页", "页面名特殊字符往返");
+    Check(parsed["pages"][0].value("background", "") == "#EAF2FF", "页面背景色往返");
+    Check(parsed["pages"][1].value("background", "") == "#FFFFFF", "未设置背景的页面默认白色");
     CheckNear(parsed["pages"][1]["size"].value("w", 0.0), 400, 0.5, "空页宽度 = 400");
     Check(parsed["pages"][1]["shapes"].empty(), "空页无形状");
     Check(parsed["pages"][2].value("name", "") == "样式页", "第三页名称保留");
 
     const json& s1 = parsed["pages"][0]["shapes"];
-    {
-        vsx::Package dbg;
-        std::string de;
-        if (vsx::Package::LoadFromBytes(bytes, dbg, de)) {
-            std::string px = dbg.FindOr("visio/pages/page1.xml");
-            std::printf("DEBUG page1.xml head: %.900s\n", px.c_str());
-        }
-    }
-    std::printf("DEBUG p1 shapes: %s\n", s1.dump(2).c_str());
-    std::printf("DEBUG p3 shapes: %s\n", parsed["pages"][2]["shapes"].dump(2).c_str());
     json m1 = FindShape(s1, "m1");
     Check(!m1.is_null() && m1.value("type", "") == "rect", "m1 缺省 style 读回为 rect");
     if (!m1.is_null()) {
@@ -273,8 +275,8 @@ void RunBasicScenarios() {
         CheckNear(m1.value("y", 0.0), 20, 0.5, "m1 y 往返");
         CheckNear(m1.value("w", 0.0), 50, 0.5, "m1 w 往返");
         CheckNear(m1.value("h", 0.0), 40, 0.5, "m1 h 往返");
-        Check(m1["style"].value("fill", "") == "#FFFFFF", "m1 缺省填充 = #FFFFFF");
-        Check(m1["style"].value("line", "") == "#000000", "m1 缺省边线 = #000000");
+        Check(Obj(m1, "style").value("fill", "") == "#FFFFFF", "m1 缺省填充 = #FFFFFF");
+        Check(Obj(m1, "style").value("line", "") == "#000000", "m1 缺省边线 = #000000");
     }
     json m2 = FindShape(s1, "m2");
     Check(!m2.is_null() && m2.value("text", "") == "&quot;&lt;特殊&gt;&amp;字符\"'", "m2 文本实体往返");
@@ -295,22 +297,24 @@ void RunBasicScenarios() {
 
     const json& s3 = parsed["pages"][2]["shapes"];
     json b1 = FindShape(s3, "b1");
-    Check(!b1.is_null() && b1["style"].value("fill", "") == "transparent", "b1 透明填充往返");
+    Check(!b1.is_null() && Obj(b1, "style").value("fill", "") == "transparent", "b1 透明填充往返");
     if (!b1.is_null()) Check(b1.value("layer", "") == "l2", "b1 图层归属保留");
     json b2 = FindShape(s3, "b2");
-    Check(!b2.is_null() && b2["style"].value("line", "") == "transparent", "b2 透明边线往返");
+    Check(!b2.is_null() && Obj(b2, "style").value("line", "") == "transparent", "b2 透明边线往返");
     json b3 = FindShape(s3, "b3");
     Check(!b3.is_null() && b3.value("route", "") == "straight", "b3 直连布线往返");
     if (!b3.is_null()) {
-        Check(b3["style"].value("arrowEnd", true) == false, "b3 无末端箭头往返");
-        CheckNear(b3["begin"].value("x", 0.0), 100, 0.5, "b3 起点 x 往返");
-        CheckNear(b3["end"].value("y", 0.0), 220, 0.5, "b3 终点 y 往返");
+        Check(Obj(b3, "style").value("arrowEnd", true) == false, "b3 无末端箭头往返");
+        CheckNear(Obj(b3, "begin").value("x", 0.0), 100, 0.5, "b3 起点 x 往返");
+        CheckNear(Obj(b3, "end").value("y", 0.0), 220, 0.5, "b3 终点 y 往返");
     }
     json b4 = FindShape(s3, "b4");
     Check(!b4.is_null() && b4.value("type", "") == "panel", "b4 动态面板类型往返");
     if (!b4.is_null()) {
-        Check(b4.contains("panel") && b4["panel"].value("action", "") == "toggle", "b4 面板配置往返");
+        Check(Obj(b4, "panel").value("action", "") == "toggle", "b4 面板配置往返");
         Check(b4.value("interactions", json::array()).size() == 1, "b4 交互事件往返");
+        // 交互 / 面板目标按 id 字符串引用，id 不一致会导致跳转失效
+        Check(!FindShape(s3, "b2").is_null(), "b4 交互目标 b2 可解析");
     }
 
     // 二次往返稳定性
@@ -320,10 +324,10 @@ void RunBasicScenarios() {
     Check(!bytes2.empty() && vsx::ParseVsdxBytes(bytes2, parsed3, warn3, err), "基础场景二次往返成功");
     if (!parsed3.is_null() && parsed3["pages"].size() == 3) {
         Check(parsed3["pages"][0]["name"] == "A&B <1> 页", "二次往返页面名稳定");
-        Check(FindShape(parsed3["pages"][0]["shapes"], "m2").value("text", "") ==
-                  "&quot;&lt;特殊&gt;&amp;字符\"'",
-              "二次往返文本实体稳定");
-        Check(FindShape(parsed3["pages"][2]["shapes"], "b1")["style"].value("fill", "") == "transparent",
+        json m2b = FindShape(parsed3["pages"][0]["shapes"], "m2");
+        Check(!m2b.is_null() && m2b.value("text", "") == "&quot;&lt;特殊&gt;&amp;字符\"'", "二次往返文本实体稳定");
+        json b1b = FindShape(parsed3["pages"][2]["shapes"], "b1");
+        Check(!b1b.is_null() && Obj(b1b, "style").value("fill", "") == "transparent",
               "二次往返透明填充稳定");
     }
 
@@ -480,6 +484,7 @@ int main(int argc, char** argv) {
         Check(pageXml.find("登录") != std::string::npos, "page1 含中文文本");
         Check(pageXml.find("PinX") != std::string::npos, "page1 含 PinX 坐标");
         Check(pageXml.find("VXGlueBegin") != std::string::npos, "page1 含连接线粘附标记");
+        Check(pageXml.find("N=\"VXId\"") != std::string::npos, "page1 含形状 id 标记");
     }
 
     std::printf("2) VSDX -> JSON\n");
@@ -494,6 +499,7 @@ int main(int argc, char** argv) {
     Check(parsed["pages"][0].value("name", "") == "登录页", "页面名保留");
     CheckNear(parsed["pages"][0]["size"].value("w", 0.0), 800, 0.5, "页面宽 = 800");
     CheckNear(parsed["pages"][0]["size"].value("h", 0.0), 1100, 0.5, "页面高 = 1100");
+    Check(parsed["pages"][0].value("background", "") == "#F2F6FC", "页面背景色保留");
 
     const json& shapes = parsed["pages"][0]["shapes"];
 

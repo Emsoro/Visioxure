@@ -24,28 +24,6 @@
           <div id="file-recent"></div>
         </div>
       </span>
-      <span class="menu-item">编辑</span>
-      <span class="menu-item">视图</span>
-      <span class="menu-item">插入</span>
-      <span class="menu-item" data-menu="arrange">排列
-        <div class="menu-drop hidden" id="menu-arrange">
-          <div class="menu-entry" data-act="group">组合 <span class="menu-key">Ctrl+G</span></div>
-          <div class="menu-entry" data-act="ungroup">解除组合 <span class="menu-key">Ctrl+Shift+G</span></div>
-          <div class="menu-sep"></div>
-          <div class="menu-entry" data-act="union">联合</div>
-          <div class="menu-entry" data-act="intersect">相交</div>
-          <div class="menu-entry" data-act="subtract">剪除</div>
-          <div class="menu-sep"></div>
-          <div class="menu-entry" data-act="align-left">左对齐</div>
-          <div class="menu-entry" data-act="align-hcenter">水平居中分布</div>
-          <div class="menu-entry" data-act="align-right">右对齐</div>
-          <div class="menu-entry" data-act="align-top">顶对齐</div>
-          <div class="menu-entry" data-act="align-vcenter">垂直居中分布</div>
-          <div class="menu-entry" data-act="align-bottom">底对齐</div>
-        </div>
-      </span>
-      <span class="menu-item">交互</span>
-      <span class="menu-item">帮助</span>
     </nav>
     <div class="menubar-right">
       <span id="doc-title">未命名.vsdx</span>
@@ -63,6 +41,23 @@
     <div class="tool-group">
       <button class="tool-btn" id="btn-undo" title="撤销 (Ctrl+Z)"><svg viewBox="0 0 16 16"><path d="M6 3L2 7l4 4M2 7h7a4 4 0 010 8H6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
       <button class="tool-btn" id="btn-redo" title="重做 (Ctrl+Y)"><svg viewBox="0 0 16 16"><path d="M10 3l4 4-4 4M14 7H7a4 4 0 000 8h1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
+    </div>
+    <div class="tool-sep"></div>
+    <!-- 排列：组合 / 布尔运算 / 对齐（原「排列」菜单） -->
+    <div class="tool-group" id="arrange-tools">
+      <button class="tool-btn" data-arrange="group" title="组合 (Ctrl+G)"><svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="6.5" y="6.5" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
+      <button class="tool-btn" data-arrange="ungroup" title="解除组合 (Ctrl+Shift+G)"><svg viewBox="0 0 16 16"><rect x="1.2" y="1.2" width="6.6" height="6.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 1.6"/><rect x="8.2" y="8.2" width="6.6" height="6.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
+      <span class="tool-sep"></span>
+      <button class="tool-btn" data-arrange="union" title="联合"><svg viewBox="0 0 16 16"><circle cx="6" cy="8" r="4.4" fill="currentColor" opacity="0.32"/><circle cx="10" cy="8" r="4.4" fill="currentColor" opacity="0.32"/><circle cx="6" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="tool-btn" data-arrange="intersect" title="相交"><svg viewBox="0 0 16 16"><circle cx="6" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="10" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/><path d="M8 4.02A4.4 4.4 0 018 11.98A4.4 4.4 0 018 4.02z" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="subtract" title="剪除"><svg viewBox="0 0 16 16"><circle cx="6" cy="8" r="4.4" fill="currentColor" opacity="0.32"/><circle cx="6" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="8" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/></svg></button>
+      <span class="tool-sep"></span>
+      <button class="tool-btn" data-arrange="align-left" title="左对齐"><svg viewBox="0 0 16 16"><path d="M3 2v12" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="5" y="3.4" width="8" height="3.4" rx="0.8" fill="currentColor"/><rect x="5" y="9.2" width="5" height="3.4" rx="0.8" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="align-hcenter" title="水平居中"><svg viewBox="0 0 16 16"><path d="M8 1.5v13" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3" y="3.4" width="10" height="3.4" rx="0.8" fill="currentColor"/><rect x="5" y="9.2" width="6" height="3.4" rx="0.8" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="align-right" title="右对齐"><svg viewBox="0 0 16 16"><path d="M13 2v12" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3" y="3.4" width="8" height="3.4" rx="0.8" fill="currentColor"/><rect x="6" y="9.2" width="5" height="3.4" rx="0.8" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="align-top" title="顶对齐"><svg viewBox="0 0 16 16"><path d="M2 3h12" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3.4" y="5" width="3.4" height="8" rx="0.8" fill="currentColor"/><rect x="9.2" y="5" width="3.4" height="5" rx="0.8" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="align-vcenter" title="垂直居中"><svg viewBox="0 0 16 16"><path d="M1.5 8h13" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3.4" y="3" width="3.4" height="10" rx="0.8" fill="currentColor"/><rect x="9.2" y="5" width="3.4" height="6" rx="0.8" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-arrange="align-bottom" title="底对齐"><svg viewBox="0 0 16 16"><path d="M2 13h12" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3.4" y="3" width="3.4" height="8" rx="0.8" fill="currentColor"/><rect x="9.2" y="6" width="3.4" height="5" rx="0.8" fill="currentColor"/></svg></button>
     </div>
     <div class="tool-sep"></div>
     <div class="tool-group">
@@ -109,6 +104,7 @@
         <span class="panel-tab" data-tab="interact">交互</span>
         <span class="panel-tab" data-tab="notes">注释</span>
         <span class="panel-tab" data-tab="layers">图层</span>
+        <span class="panel-tab" data-tab="page">页面</span>
         <button class="panel-collapse" id="btn-right-collapse" title="折叠面板">
           <svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
         </button>
@@ -120,6 +116,7 @@
         <div id="layer-panel"></div>
         <button class="btn-full" id="btn-add-layer">+ 新建图层</button>
       </div>
+      <div class="panel-body hidden" data-tab-page="page" id="page-panel"></div>
     </aside>
   </div>
 
@@ -152,6 +149,7 @@
 <script src="js/preview.js"></script>
 <script src="js/inspect.js"></script>
 <script src="js/meta.js"></script>
+<script src="js/page.js"></script>
 <script src="js/style.js"></script>
 <script src="js/fileio.js"></script>
 <script src="js/app.js" defer></script>

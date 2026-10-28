@@ -55,6 +55,7 @@
         id: "p1",
         name: "页面-1",
         size: { mode: "fixed", w: 800, h: 1100, orientation: "portrait" },
+        background: "#FFFFFF",
         guides: [],
         variables: [],
         layers: [{ id: "l1", name: "默认", visible: true, locked: false }],

@@ -9,8 +9,25 @@
     return { type: "path", w, h, path: { subpaths: [pts], fillRule: "evenodd" } };
   }
 
+  // ---------- 形状库视觉规范 ----------
+  // 缩略图与插入后的形状共用这一套色板，保证“所见即所得”且整库风格一致：
+  // 统一主描边 ink / 次要描边 inkSoft / 中性浅底 surface，语义色（热区）单独保留。
+  const SK = {
+    ink: "#39434F",
+    inkSoft: "#8B96A5",
+    blob: "#C2CBD8",
+    surface: "#EEF1F6",
+    paper: "#FFFFFF",
+    text: "#4A5462",
+    textDim: "#8B96A5",
+    warnFill: "#FFF3D1",
+    warnLine: "#D9A62E",
+    warnText: "#A87B0F",
+    lineWidth: 1.4,
+  };
+
   // ---------- 交互原型：组合构件的局部坐标小工具 ----------
-  const FONT = { family: "Segoe UI", size: 13, color: "#333333", bold: false, align: "center", vAlign: "middle" };
+  const FONT = { family: "Segoe UI", size: 13, color: SK.text, bold: false, align: "center", vAlign: "middle" };
   function font(patch) { return Object.assign({}, FONT, patch || {}); }
   function box(x, y, w, h, style) { return { type: "rect", x, y, w, h, style }; }
   function ellipse(x, y, w, h, style) { return { type: "ellipse", x, y, w, h, style }; }
@@ -58,7 +75,7 @@
           id: "proto-button", name: "按钮",
           def: {
             type: "rect", w: 100, h: 32, text: "按钮",
-            style: { cornerRadius: 6, fill: "#F2F2F2", line: "#7F7F7F", lineWidth: 1, font: font() },
+            style: { cornerRadius: 6, fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font() },
           },
         },
         {
@@ -72,7 +89,7 @@
           id: "proto-textbox", name: "文本框",
           def: {
             type: "rect", w: 160, h: 32, text: "请输入…",
-            style: { cornerRadius: 3, fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, font: font({ align: "left", color: "#9E9E9E" }) },
+            style: { cornerRadius: 3, fill: SK.paper, line: SK.inkSoft, lineWidth: 1, font: font({ align: "left", color: SK.textDim }) },
           },
         },
         {
@@ -80,10 +97,10 @@
           def: {
             type: "group", w: 160, h: 32,
             children: [
-              box(0, 0, 160, 32, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, cornerRadius: 3 }),
+              box(0, 0, 160, 32, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1, cornerRadius: 3 }),
               label("请选择", 8, 0, 110, 32),
               poly([{ x: -7, y: -4 }, { x: 7, y: -4 }, { x: 0, y: 4 }], 136, 12, 14, 8,
-                { fill: "#7F7F7F", line: "transparent", lineWidth: 0 }),
+                { fill: SK.inkSoft, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
@@ -92,7 +109,7 @@
           def: {
             type: "group", w: 140, h: 24,
             children: [
-              box(0, 4, 16, 16, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, cornerRadius: 2 }),
+              box(0, 4, 16, 16, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1, cornerRadius: 2 }),
               label("复选框", 24, 0, 116, 24),
             ],
           },
@@ -102,7 +119,7 @@
           def: {
             type: "group", w: 140, h: 24,
             children: [
-              ellipse(0, 4, 16, 16, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1 }),
+              ellipse(0, 4, 16, 16, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1 }),
               label("单选按钮", 24, 0, 116, 24),
             ],
           },
@@ -112,10 +129,10 @@
           def: {
             type: "group", w: 120, h: 90,
             children: [
-              box(0, 0, 120, 90, { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1 }),
-              ellipse(76, 14, 14, 14, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+              box(0, 0, 120, 90, { fill: SK.surface, line: SK.inkSoft, lineWidth: 1 }),
+              ellipse(76, 14, 14, 14, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
               poly([{ x: -30, y: 17 }, { x: 0, y: -17 }, { x: 30, y: 17 }], 28, 42, 60, 34,
-                { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+                { fill: SK.blob, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
@@ -124,10 +141,10 @@
           def: {
             type: "group", w: 90, h: 110,
             children: [
-              box(0, 0, 90, 110, { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1 }),
-              ellipse(32, 18, 26, 26, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+              box(0, 0, 90, 110, { fill: SK.surface, line: SK.inkSoft, lineWidth: 1 }),
+              ellipse(32, 18, 26, 26, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
               poly([{ x: -29, y: 19 }, { x: -19, y: -6 }, { x: 0, y: -15 }, { x: 19, y: -6 }, { x: 29, y: 19 }],
-                16, 56, 58, 38, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+                16, 56, 58, 38, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
@@ -135,7 +152,7 @@
           id: "proto-placeholder", name: "通用占位",
           def: {
             type: "rect", w: 120, h: 90, text: "占位符",
-            style: { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1, font: font({ color: "#9E9E9E" }) },
+            style: { fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font({ color: SK.textDim }) },
           },
         },
         {
@@ -146,14 +163,14 @@
           id: "proto-repeater", name: "中继器",
           def: {
             type: "rect", w: 200, h: 120, text: "中继器",
-            style: { cornerRadius: 2, fill: "#F7F7F7", line: "#A6A6A6", lineWidth: 1, font: font({ color: "#7F7F7F" }) },
+            style: { cornerRadius: 3, fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font({ color: SK.textDim }) },
           },
         },
         {
           id: "proto-hotspot", name: "热区",
           def: {
             type: "rect", w: 160, h: 90, text: "热区",
-            style: { cornerRadius: 2, fill: "#FFF2CC", line: "#BF9000", lineWidth: 1, font: font({ color: "#BF9000" }) },
+            style: { cornerRadius: 3, fill: SK.warnFill, line: SK.warnLine, lineWidth: 1, font: font({ color: SK.warnText }) },
           },
         },
       ],
@@ -175,14 +192,14 @@
     }
   }
 
-  // 条目实际样式：默认「无填充 + 黑边」，条目 def.style 覆盖；
+  // 条目实际样式：默认「无填充 + 深灰描边」，条目 def.style 覆盖；
   // 无填充时字色落成深色（否则默认白字在白纸上不可见）
   function stencilStyle(def) {
     const base = VX.Model.defaultStyleFor ? VX.Model.defaultStyleFor(def.type) : {};
     const defStyle = def.style || {};
-    const out = Object.assign(base, { fill: "transparent", line: "#000000", lineWidth: 1.5 }, defStyle);
+    const out = Object.assign(base, { fill: "transparent", line: SK.ink, lineWidth: SK.lineWidth }, defStyle);
     if (!defStyle.font && out.fill === "transparent") {
-      out.font = Object.assign({}, base.font || {}, { color: "#333333" });
+      out.font = Object.assign({}, base.font || {}, { color: SK.text });
     }
     return out;
   }
@@ -224,7 +241,6 @@
         cell.className = "stencil-item";
         cell.title = item.name;
         const cv = document.createElement("canvas");
-        cv.width = 72; cv.height = 48;
         // 单条缩略图出错不能拖垮整个面板（否则后面的条目会整批消失）
         try {
           drawThumb(cv, item.def);
@@ -260,12 +276,26 @@
   }
 
   // ---------- 缩略图：按包围盒等比缩放，与插入后的样式一致 ----------
+  // 缩略图画布逻辑尺寸（CSS px）；实际像素按 devicePixelRatio 放大，保证高分屏下线条不模糊
+  const THUMB_W = 72, THUMB_H = 48;
+
   function drawThumb(cv, def) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.width = Math.round(THUMB_W * dpr);
+    cv.height = Math.round(THUMB_H * dpr);
+    cv.style.aspectRatio = THUMB_W + " / " + THUMB_H;
+
     const c = cv.getContext("2d");
-    const pad = 6;
+    if (!c) return;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.lineJoin = "round";
+    c.lineCap = "round";
+
+    // 统一的内边距：所有条目在单元格里留白一致，视觉重心才会齐
+    const pad = 7;
     const w = Math.max(def.w || 1, 1), h = Math.max(def.h || 1, 1);
-    const k = Math.min((cv.width - pad * 2) / w, (cv.height - pad * 2) / h);
-    const ox = (cv.width - w * k) / 2, oy = (cv.height - h * k) / 2;
+    const k = Math.min((THUMB_W - pad * 2) / w, (THUMB_H - pad * 2) / h);
+    const ox = (THUMB_W - w * k) / 2, oy = (THUMB_H - h * k) / 2;
     c.save();
     c.translate(ox, oy);
     c.scale(k, k);
@@ -291,7 +321,7 @@
   }
 
   function drawThumbNode(c, s, k) {
-    // 缩略图与插入后的效果一致：模板没写 style 的条目也用上默认黑色边框
+    // 缩略图与插入后的效果一致：模板没写 style 的条目也套用统一色板的主描边
     const st = Object.assign(stencilStyle(s), s.style || {});
     if (s.type === "group") {
       for (const ch of s.children || []) drawThumbNode(c, ch, k);
@@ -300,8 +330,8 @@
     if (s.type === "connector") {
       const y = (s.h || 0) / 2;
       const x1 = 4, x2 = Math.max((s.w || 120) - 4, x1 + 4);
-      c.strokeStyle = "#000000";
-      c.lineWidth = 1.5 / k;
+      c.strokeStyle = SK.ink;
+      c.lineWidth = SK.lineWidth / k;
       c.beginPath();
       c.moveTo(x1, y); c.lineTo(x2, y);
       c.stroke();
@@ -311,7 +341,7 @@
       c.lineTo(x2 - ah, y - ah * 0.55);
       c.lineTo(x2 - ah, y + ah * 0.55);
       c.closePath();
-      c.fillStyle = "#000000";
+      c.fillStyle = SK.ink;
       c.fill();
       return;
     }
@@ -348,8 +378,8 @@
       c.lineWidth = Math.max(st.lineWidth || 1, 0.5) / k;
       c.stroke();
     } else if (s.type === "panel") {
-      c.strokeStyle = "#9AA0A8";
-      c.lineWidth = 1 / k;
+      c.strokeStyle = SK.inkSoft;
+      c.lineWidth = SK.lineWidth / k;
       c.setLineDash([4 / k, 3 / k]);
       c.stroke();
       c.setLineDash([]);
@@ -362,11 +392,13 @@
   function drawThumbText(c, s, k, st, align) {
     const f = st.font || {};
     const size = f.size || 13;
-    if (size * k < 5) return; // 太小，省略文字避免糊成一团
+    if (size * k < 4.2) return; // 太小，省略文字避免糊成一团
+    // 小尺寸下略放大字号，保证缩略图里的标签依然可读
+    const drawSize = Math.max(size, Math.min(9 / k, size * 1.6));
     const sx = s.x || 0, sy = s.y || 0;
     c.save();
-    c.fillStyle = f.color || "#333333";
-    c.font = `${f.bold ? "bold " : ""}${size}px 'Segoe UI'`;
+    c.fillStyle = f.color || SK.text;
+    c.font = `${f.bold ? "bold " : ""}${drawSize}px 'Segoe UI'`;
     c.textAlign = align === "center" ? "center" : "left";
     c.textBaseline = "middle";
     const tx = align === "center" ? sx + (s.w || 0) / 2 : sx + 3;

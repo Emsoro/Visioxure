@@ -126,23 +126,34 @@ body {
 .tree-icon.page { border: 1.5px solid var(--text-dim); border-radius: 2px; background: #fff; }
 .tree-icon.layer { border-radius: 50%; border: 1.5px solid var(--text-dim); }
 
-/* 形状库 */
-.stencil-group-title { color: var(--text-dim); margin: 8px 2px 6px; font-weight: 600; }
-.stencil-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.stencil-item {
-  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--chrome-border); border-radius: 6px; cursor: grab;
-  background: #fff;
+/* 形状库：缩略图卡片 + 分类标题（色板与 stencils.js 的 SK 保持一致） */
+.stencil-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.stencil-cat {
+  display: flex; align-items: center; gap: 6px;
+  margin: 10px 0 6px; padding: 0 2px 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-dim);
+  border-bottom: 1px solid var(--chrome-border);
 }
-.stencil-item:hover { border-color: var(--accent); background: var(--accent-soft); }
-.shape-preview { background: #c7d4ea; }
-.shape-preview.rect { width: 26px; height: 18px; border-radius: 2px; }
-.shape-preview.ellipse { width: 24px; height: 18px; border-radius: 50%; }
-.shape-preview.triangle { width: 0; height: 0; background: none;
-  border-left: 11px solid transparent; border-right: 11px solid transparent;
-  border-bottom: 19px solid #c7d4ea; }
-.shape-preview.diamond { width: 16px; height: 16px; transform: rotate(45deg); border-radius: 2px; }
-.shape-preview.stadium { width: 28px; height: 16px; border-radius: 8px; }
+.stencil-cat:first-child { margin-top: 0; }
+.stencil-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 0; padding: 6px 4px 5px;
+  border: 1px solid var(--chrome-border); border-radius: 7px; background: #fff;
+  cursor: grab;
+  transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
+}
+.stencil-item:hover {
+  border-color: rgba(47, 111, 237, .45); background: var(--accent-soft);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+}
+.stencil-item:active { box-shadow: inset 0 1px 2px rgba(15, 23, 42, .14); }
+.stencil-item canvas { display: block; width: 100%; height: auto; }
+.stencil-name {
+  width: 100%; text-align: center;
+  font-size: 11px; line-height: 14px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stencil-item:hover .stencil-name { color: var(--accent); }
 
 /* 属性面板 */
 .prop-empty { color: var(--text-dim); text-align: center; padding: 14px 0; }
@@ -220,12 +231,13 @@ body {
 .menu-label { color: var(--text-dim); font-size: 11px; padding: 4px 10px 2px; }
 
 #stencil-panel { overflow-x: hidden; }
-#stencil-panel .stencil-cat { color: var(--text-dim); margin: 10px 2px 6px; font-weight: 600; font-size: 12px; }
-/* 固定三列且不出现横向滚动条：列宽随面板收缩，缩略图按容器宽度等比缩放 */
-#stencil-panel .stencil-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-#stencil-panel .stencil-item { aspect-ratio: auto; flex-direction: column; gap: 2px; padding: 4px 2px 2px; min-width: 0; }
-.stencil-name { font-size: 11px; color: var(--text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#stencil-panel .stencil-item canvas { display: block; width: 100%; height: auto; }
+
+/* 页面设置：尺寸 / 背景色摘要 */
+.pp-summary {
+  margin-top: 8px; padding: 6px 8px;
+  border: 1px dashed var(--chrome-border); border-radius: 6px;
+  color: var(--text-dim); font-size: 11px; text-align: center;
+}
 
 .btn-full { width: calc(100% - 8px); margin: 8px 4px; padding: 6px; border: 1px dashed var(--chrome-border); border-radius: 6px; background: #fff; color: var(--text-dim); cursor: pointer; }
 .btn-full:hover { color: var(--accent); border-color: var(--accent); }

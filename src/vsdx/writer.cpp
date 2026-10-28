@@ -316,7 +316,7 @@ void CollectShapes(const nlohmann::json& shapes, const std::string& chain, std::
 // 单个形状 → Visio Shape XML
 std::string BuildShapeXml(const Item& item, double pageHIn,
                           const std::map<std::string, const nlohmann::json*>& byId,
-                          int numericId) {
+                          const std::map<std::string, int>& layerIndex, int numericId) {
     const nlohmann::json& s = *item.sh;
     std::string type = JStr(s, "type", "rect");
     std::string internalId = JStr(s, "id", "s" + std::to_string(numericId));
@@ -463,6 +463,10 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     out += Cell("FlipX", "0") + Cell("FlipY", "0");
     out += Cell("ResizeMode", "0");
 
+    // 图层归属：Visio 用 LayerMember 记图层序号，与 layers 数组下标一致
+    auto layerIt = layerIndex.find(JStr(s, "layer"));
+    if (layerIt != layerIndex.end()) out += Cell("LayerMember", std::to_string(layerIt->second));
+
     if (hasFill) {
         out += Cell("FillPattern", "1") + Cell("FillForegnd", fill) + Cell("FillBkgnd", "#FFFFFF");
         if (opacity < 0.999) out += Cell("FillForegndTrans", Num(1.0 - opacity));
@@ -517,8 +521,10 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
                Cell("HorzAlign", std::to_string(horz)) + "</Row></Section>";
     }
 
-    // 自定义数据：组合归属 / 类型 / 连接线粘附 / 交互 / 动态面板（P4）
+    // 自定义数据：形状 id / 组合归属 / 类型 / 连接线粘附 / 交互 / 动态面板（P4）
     std::string user;
+    // id 原样落盘：交互 / 面板目标都用字符串引用它，读回时必须完全一致
+    user += UserRow("VXId", internalId);
     if (!item.groupChain.empty()) {
         user += UserRow("VXGroup", item.groupChain);
     }
@@ -586,6 +592,19 @@ std::string WritePageXml(const nlohmann::json& page, std::string& err) {
     std::map<std::string, const nlohmann::json*> byId;
     for (const Item& it : items) byId[JStr(*it.sh, "id")] = it.sh;
 
+    // 图层序号：layers 数组下标即 Visio 的图层号
+    std::map<std::string, int> layerIndex;
+    {
+        auto it = page.find("layers");
+        if (it != page.end() && it->is_array()) {
+            int pos = 0;
+            for (const auto& l : *it) {
+                if (!l.is_object()) continue;
+                layerIndex[JStr(l, "id")] = pos++;
+            }
+        }
+    }
+
     std::string xml =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<PageContents xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\" "
@@ -595,7 +614,7 @@ std::string WritePageXml(const nlohmann::json& page, std::string& err) {
     xml += "<Shapes>";
     int numeric = 1;
     for (const Item& it : items) {
-        xml += BuildShapeXml(it, pageHIn, byId, numeric++);
+        xml += BuildShapeXml(it, pageHIn, byId, layerIndex, numeric++);
     }
     xml += "</Shapes>";
 
@@ -770,6 +789,9 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
         std::string orientation = JStr(sizeObj, "orientation", "portrait");
         pagesXml += Cell("PrintPageOrientation", orientation == "landscape" ? "2" : "1");
         pagesXml += Cell("PageLockReplace", "0") + Cell("PageLockDuplicate", "0");
+        // 页面背景色：Visio 的页面背景就是 PageSheet 的填充色
+        pagesXml += Cell("FillForegnd", JStr(page, "background", "#FFFFFF"));
+        pagesXml += Cell("FillPattern", "1");
 
         // 页面/全局变量（P4）：写入 PageSheet 的 User 段，本应用往返保真
         std::string userRows;

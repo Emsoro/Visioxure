@@ -369,12 +369,12 @@
     const p0 = vp.w2s(0, 0);
     const pw = pg.size.w * z, ph = pg.size.h * z;
 
-    // 页面阴影 + 白底
+    // 页面阴影 + 背景色（页面设置里可改，默认白色）
     c.save();
     c.shadowColor = "rgba(0,0,0,0.15)";
     c.shadowBlur = 12;
     c.shadowOffsetY = 3;
-    c.fillStyle = "#ffffff";
+    c.fillStyle = pg.background || "#ffffff";
     c.fillRect(p0.x, p0.y, pw, ph);
     c.restore();
 
