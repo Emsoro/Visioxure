@@ -1,0 +1,26 @@
+# 构建产物
+build/
+out/
+.vs/
+x64/
+Debug/
+Release/
+*.user
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+
+# IDE / 工具缓存
+.screenshots/
+.trae-html-share-packages/
+.vscode/
+__pycache__/
+*.log
+
+# 临时测试输出
+canvas.png
+*.tmp

@@ -1,0 +1,738 @@
+// writer.cpp —— 内部文档 JSON → VisioML（VSDX 最小合法包）
+// 坐标约定：内部 px（96 DPI）、原点左上、Y 向下；Visio 英寸、原点左下、Y 向上。
+#include "writer.hpp"
+
+#include "package.hpp"
+#include "xml.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace vsx {
+
+namespace {
+
+constexpr double kPxPerInch = 96.0;
+constexpr double kLead = 16.0;  // 连接线出线引导段（px）
+
+struct Pt {
+    double x = 0, y = 0;
+};
+
+std::string Num(double v) {
+    if (std::fabs(v) < 5e-7) v = 0.0;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.6f", v);
+    std::string s(buf);
+    while (s.size() > 1 && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    if (s.empty() || s == "-0") s = "0";
+    return s;
+}
+
+double JNum(const nlohmann::json& o, const char* key, double def) {
+    auto it = o.find(key);
+    if (it == o.end() || !it->is_number()) return def;
+    return it->get<double>();
+}
+
+std::string JStr(const nlohmann::json& o, const char* key, const std::string& def = "") {
+    auto it = o.find(key);
+    if (it == o.end() || !it->is_string()) return def;
+    return it->get<std::string>();
+}
+
+std::string Cell(const std::string& name, const std::string& value) {
+    return "<Cell N=\"" + name + "\" V=\"" + XmlEscape(value) + "\"/>";
+}
+
+std::string CellF(const std::string& name, const std::string& value, const std::string& formula) {
+    return "<Cell N=\"" + name + "\" V=\"" + XmlEscape(value) + "\" F=\"" + XmlEscape(formula) + "\"/>";
+}
+
+// ---------- 连接线端点/布线（routing.js 的 C++ 移植，保证与编辑器一致性） ----------
+
+struct GlueRef {
+    std::string id;
+    int anchor = -1;
+};
+
+bool ParseGlue(const std::string& glue, GlueRef& out) {
+    size_t idx = glue.find(':');
+    if (idx == std::string::npos) return false;
+    out.id = glue.substr(0, idx);
+    out.anchor = std::atoi(glue.c_str() + idx + 1) & 3;
+    return !out.id.empty();
+}
+
+Pt AnchorOf(const nlohmann::json& t, int n) {
+    double x = JNum(t, "x", 0), y = JNum(t, "y", 0), w = JNum(t, "w", 0), h = JNum(t, "h", 0);
+    double angle = JNum(t, "angle", 0);
+    double cx = x + w / 2, cy = y + h / 2;
+    Pt pts[4] = {{cx, y}, {x + w, cy}, {cx, y + h}, {x, cy}};
+    Pt p = pts[n & 3];
+    if (angle != 0) {
+        double c = std::cos(angle), s = std::sin(angle);
+        Pt r;
+        r.x = cx + (p.x - cx) * c - (p.y - cy) * s;
+        r.y = cy + (p.x - cx) * s + (p.y - cy) * c;
+        return r;
+    }
+    return p;
+}
+
+Pt RotateNormal(Pt nv, double angle) {
+    if (angle == 0) return nv;
+    double c = std::cos(angle), s = std::sin(angle);
+    return {nv.x * c - nv.y * s, nv.x * s + nv.y * c};
+}
+
+// 自由点（begin/end 对象）
+Pt FreePoint(const nlohmann::json& sh, const char* key) {
+    Pt p;
+    auto it = sh.find(key);
+    if (it != sh.end() && it->is_object()) {
+        p.x = JNum(*it, "x", 0);
+        p.y = JNum(*it, "y", 0);
+    }
+    return p;
+}
+
+// routing.js elbow() 移植
+void Elbow(Pt a, Pt b, const Pt* na, const Pt* nb, std::vector<Pt>& pts) {
+    double midx = (a.x + b.x) / 2, midy = (a.y + b.y) / 2;
+    bool aH = na ? na->x != 0 : std::fabs(b.x - a.x) >= std::fabs(b.y - a.y);
+
+    if (!na && !nb) {
+        if (aH) pts.push_back({b.x, a.y});
+        else pts.push_back({a.x, b.y});
+        return;
+    }
+    if (aH) {
+        double x2;
+        if (!nb) {
+            x2 = b.x;
+        } else if (nb->x != 0) {
+            bool faceToFace = (na->x > 0 && nb->x < 0) || (na->x < 0 && nb->x > 0);
+            bool okDir = (na->x > 0 && b.x > a.x) || (na->x < 0 && b.x < a.x);
+            x2 = (faceToFace && okDir) ? b.x : midx;
+        } else {
+            bool okDir = (na->x > 0 && b.x > a.x) || (na->x < 0 && b.x < a.x);
+            x2 = okDir ? b.x : midx;
+        }
+        pts.push_back({x2, a.y});
+        if (std::fabs(x2 - b.x) > 0.5) pts.push_back({x2, b.y});
+    } else {
+        double y2;
+        if (!nb) {
+            y2 = b.y;
+        } else if (nb->y != 0) {
+            bool faceToFace = (na->y > 0 && nb->y < 0) || (na->y < 0 && nb->y > 0);
+            bool okDir = (na->y > 0 && b.y > a.y) || (na->y < 0 && b.y < a.y);
+            y2 = (faceToFace && okDir) ? b.y : midy;
+        } else {
+            bool okDir = (na->y > 0 && b.y > a.y) || (na->y < 0 && b.y < a.y);
+            y2 = okDir ? b.y : midy;
+        }
+        pts.push_back({a.x, y2});
+        if (std::fabs(y2 - b.y) > 0.5) pts.push_back({b.x, y2});
+    }
+}
+
+std::vector<Pt> ConnectorPoints(const nlohmann::json& sh,
+                                const std::map<std::string, const nlohmann::json*>& byId) {
+    auto resolve = [&](const char* which, Pt& p, Pt* nrm, bool& glued) {
+        glued = false;
+        auto it = sh.find("glue");
+        if (it != sh.end() && it->is_object()) {
+            GlueRef g;
+            if (ParseGlue(JStr(*it, which), g)) {
+                auto sit = byId.find(g.id);
+                if (sit != byId.end() && sit->second) {
+                    p = AnchorOf(*sit->second, g.anchor);
+                    static const Pt kN[4] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+                    *nrm = RotateNormal(kN[g.anchor & 3], JNum(*sit->second, "angle", 0));
+                    glued = true;
+                    return;
+                }
+            }
+        }
+        p = FreePoint(sh, which);
+    };
+
+    Pt A, B, na{}, nb{};
+    bool ga = false, gb = false;
+    resolve("begin", A, &na, ga);
+    resolve("end", B, &nb, gb);
+
+    std::vector<Pt> pts;
+    // 手动编辑过的折线：直接使用用户拖出的点（端点仍以粘附/自由点为准）
+    if (JStr(sh, "route", "ortho") == "manual" && sh.contains("points") && sh["points"].is_array() &&
+        sh["points"].size() >= 2) {
+        for (const auto& p : sh["points"]) {
+            if (!p.is_object()) continue;
+            pts.push_back({JNum(p, "x", 0), JNum(p, "y", 0)});
+        }
+        if (pts.size() >= 2) {
+            pts.front() = A;
+            pts.back() = B;
+            return pts;
+        }
+    }
+    if (JStr(sh, "route", "ortho") == "straight") {
+        pts = {A, B};
+        return pts;
+    }
+
+    Pt a = A, b = B;
+    if (ga) { a.x += na.x * kLead; a.y += na.y * kLead; }
+    if (gb) { b.x += nb.x * kLead; b.y += nb.y * kLead; }
+
+    pts.push_back(A);
+    if (ga) pts.push_back(a);
+    Elbow(a, b, ga ? &na : nullptr, gb ? &nb : nullptr, pts);
+    if (gb) pts.push_back(b);
+    pts.push_back(B);
+
+    // 去重
+    std::vector<Pt> out;
+    for (const Pt& p : pts) {
+        if (out.empty() || std::fabs(out.back().x - p.x) > 0.01 || std::fabs(out.back().y - p.y) > 0.01) {
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+bool PointInPolygon(const std::vector<Pt>& ring, double x, double y) {
+    bool inside = false;
+    size_t n = ring.size();
+    for (size_t i = 0, j = n ? n - 1 : 0; i < n; j = i++) {
+        const Pt& a = ring[i];
+        const Pt& b = ring[j];
+        if ((a.y > y) != (b.y > y)) {
+            double xi = (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x;
+            if (x < xi) inside = !inside;
+        }
+    }
+    return inside;
+}
+
+struct Item {
+    const nlohmann::json* sh = nullptr;
+    std::string groupChain;
+};
+
+void CollectShapes(const nlohmann::json& shapes, const std::string& chain, std::vector<Item>& out) {
+    if (!shapes.is_array()) return;
+    for (const auto& s : shapes) {
+        if (!s.is_object()) continue;
+        std::string type = JStr(s, "type");
+        if (type == "group") {
+            std::string id = JStr(s, "id");
+            std::string ch = chain.empty() ? id : (chain + "|" + id);
+            auto it = s.find("children");
+            if (it != s.end()) CollectShapes(*it, ch, out);
+        } else {
+            out.push_back({&s, chain});
+        }
+    }
+}
+
+// 单个形状 → Visio Shape XML
+std::string BuildShapeXml(const Item& item, double pageHIn,
+                          const std::map<std::string, const nlohmann::json*>& byId,
+                          int numericId) {
+    const nlohmann::json& s = *item.sh;
+    std::string type = JStr(s, "type", "rect");
+    std::string internalId = JStr(s, "id", "s" + std::to_string(numericId));
+
+    nlohmann::json st = s.value("style", nlohmann::json::object());
+    if (!st.is_object()) st = nlohmann::json::object();
+    nlohmann::json font = st.value("font", nlohmann::json::object());
+    if (!font.is_object()) font = nlohmann::json::object();
+
+    double opacity = JNum(st, "opacity", 1.0);
+    std::string fill = JStr(st, "fill", "#FFFFFF");
+    std::string line = JStr(st, "line", "#000000");
+    double lineWidth = JNum(st, "lineWidth", 1.0);
+    bool hasFill = !fill.empty() && fill != "transparent" && opacity > 0.001;
+    bool hasLine = !line.empty() && line != "transparent" && lineWidth > 0.001;
+
+    std::string x, y, w, h;  // 英寸
+    std::string geometry;
+    bool hasConnEnds = false;
+    double connBeginX = 0, connBeginY = 0, connEndX = 0, connEndY = 0;  // 世界 px
+
+    if (type == "connector") {
+        std::vector<Pt> pts = ConnectorPoints(s, byId);
+        if (pts.size() < 2) pts = {{0, 0}, {0, 0}};
+        connBeginX = pts.front().x;
+        connBeginY = pts.front().y;
+        connEndX = pts.back().x;
+        connEndY = pts.back().y;
+        hasConnEnds = true;
+        double minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y;
+        for (const Pt& p : pts) {
+            minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+            minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+        }
+        double wIn = std::max(0.001, (maxX - minX) / kPxPerInch);
+        double hIn = std::max(0.001, (maxY - minY) / kPxPerInch);
+        x = Num(((minX + maxX) / 2) / kPxPerInch);
+        y = Num(pageHIn - ((minY + maxY) / 2) / kPxPerInch);
+        w = Num(wIn);
+        h = Num(hIn);
+
+        geometry = "<Section N=\"Geometry\" IX=\"0\">" + Cell("NoFill", "1") + Cell("NoLine", "0");
+        int row = 1;
+        for (size_t i = 0; i < pts.size(); ++i) {
+            double lx = (pts[i].x - minX) / kPxPerInch;
+            double ly = (maxY - pts[i].y) / kPxPerInch;
+            geometry += "<Row T=\"" + std::string(i ? "LineTo" : "MoveTo") + "\" IX=\"" + std::to_string(row++) +
+                        "\">" + Cell("X", Num(lx)) + Cell("Y", Num(ly)) + "</Row>";
+        }
+        geometry += "</Section>";
+    } else {
+        double px = JNum(s, "x", 0), py = JNum(s, "y", 0);
+        double pw = std::max(0.01, JNum(s, "w", 0)), ph = std::max(0.01, JNum(s, "h", 0));
+        w = Num(pw / kPxPerInch);
+        h = Num(ph / kPxPerInch);
+        x = Num((px + pw / 2) / kPxPerInch);
+        y = Num(pageHIn - (py + ph / 2) / kPxPerInch);
+
+        double wIn = pw / kPxPerInch, hIn = ph / kPxPerInch;
+
+        if (type == "ellipse") {
+            geometry = "<Section N=\"Geometry\" IX=\"0\">" + Cell("NoFill", "0") + Cell("NoLine", "0") +
+                       "<Row T=\"Ellipse\" IX=\"1\">" +
+                       CellF("X", Num(wIn / 2), "Width*0.5") +
+                       CellF("Y", Num(hIn / 2), "Height*0.5") +
+                       CellF("A", Num(wIn / 2), "Width*0.5") +
+                       CellF("B", Num(hIn / 2), "Height*0.5") +
+                       Cell("C", "0") + Cell("D", "0") + "</Row></Section>";
+        } else if (type == "path") {
+            std::vector<std::vector<Pt>> rings;  // Visio 局部坐标（左下原点）
+            auto pathIt = s.find("path");
+            if (pathIt != s.end() && pathIt->is_object()) {
+                auto subIt = pathIt->find("subpaths");
+                if (subIt != pathIt->end() && subIt->is_array()) {
+                    for (const auto& ring : *subIt) {
+                        if (!ring.is_array() || ring.size() < 2) continue;
+                        std::vector<Pt> pts;
+                        for (const auto& p : ring) {
+                            if (!p.is_object()) continue;
+                            Pt q;
+                            q.x = (JNum(p, "x", 0) + pw / 2) / kPxPerInch;
+                            q.y = (ph / 2 - JNum(p, "y", 0)) / kPxPerInch;
+                            pts.push_back(q);
+                        }
+                        if (pts.size() >= 2) rings.push_back(std::move(pts));
+                    }
+                }
+            }
+            int ix = 0;
+            for (size_t ri = 0; ri < rings.size(); ++ri) {
+                bool hole = false;
+                if (rings.size() > 1) {
+                    int inside = 0;
+                    for (size_t rj = 0; rj < rings.size(); ++rj) {
+                        if (ri == rj) continue;
+                        if (PointInPolygon(rings[rj], rings[ri][0].x, rings[ri][0].y)) ++inside;
+                    }
+                    hole = (inside % 2) == 1;
+                }
+                geometry += "<Section N=\"Geometry\" IX=\"" + std::to_string(ix++) + "\">" +
+                            Cell("NoFill", hole ? "1" : "0") + Cell("NoLine", "0");
+                int row = 1;
+                geometry += "<Row T=\"MoveTo\" IX=\"" + std::to_string(row++) + "\">" +
+                            Cell("X", Num(rings[ri][0].x)) + Cell("Y", Num(rings[ri][0].y)) + "</Row>";
+                for (size_t k = 1; k < rings[ri].size(); ++k) {
+                    geometry += "<Row T=\"LineTo\" IX=\"" + std::to_string(row++) + "\">" +
+                                Cell("X", Num(rings[ri][k].x)) + Cell("Y", Num(rings[ri][k].y)) + "</Row>";
+                }
+                geometry += "<Row T=\"LineTo\" IX=\"" + std::to_string(row++) + "\">" +
+                            Cell("X", Num(rings[ri][0].x)) + Cell("Y", Num(rings[ri][0].y)) + "</Row>";
+                geometry += "</Section>";
+            }
+            if (geometry.empty()) {
+                // 退化：空 path 画成矩形框
+                geometry = "<Section N=\"Geometry\" IX=\"0\">" + Cell("NoFill", "1") + Cell("NoLine", "0") +
+                           "<Row T=\"MoveTo\" IX=\"1\">" + Cell("X", "0") + Cell("Y", "0") + "</Row>" +
+                           "<Row T=\"LineTo\" IX=\"2\">" + Cell("X", w) + Cell("Y", "0") + "</Row>" +
+                           "<Row T=\"LineTo\" IX=\"3\">" + Cell("X", w) + Cell("Y", h) + "</Row>" +
+                           "<Row T=\"LineTo\" IX=\"4\">" + Cell("X", "0") + Cell("Y", h) + "</Row>" +
+                           "<Row T=\"LineTo\" IX=\"5\">" + Cell("X", "0") + Cell("Y", "0") + "</Row></Section>";
+            }
+        } else {
+            // rect / text / 其它：矩形几何；text 无填充无边框
+            bool plainText = (type == "text");
+            geometry = "<Section N=\"Geometry\" IX=\"0\">" +
+                       Cell("NoFill", plainText || !hasFill ? "1" : "0") +
+                       Cell("NoLine", plainText || !hasLine ? "1" : "0") +
+                       "<Row T=\"MoveTo\" IX=\"1\">" + Cell("X", "0") + Cell("Y", "0") + "</Row>" +
+                       "<Row T=\"LineTo\" IX=\"2\">" + Cell("X", w) + Cell("Y", "0") + "</Row>" +
+                       "<Row T=\"LineTo\" IX=\"3\">" + Cell("X", w) + Cell("Y", h) + "</Row>" +
+                       "<Row T=\"LineTo\" IX=\"4\">" + Cell("X", "0") + Cell("Y", h) + "</Row>" +
+                       "<Row T=\"LineTo\" IX=\"5\">" + Cell("X", "0") + Cell("Y", "0") + "</Row></Section>";
+        }
+    }
+
+    std::string out = "<Shape ID=\"" + std::to_string(numericId) + "\" NameU=\"" + XmlEscape(internalId) +
+                      "\" Name=\"" + XmlEscape(internalId) +
+                      "\" Type=\"Shape\" LineStyle=\"0\" FillStyle=\"0\" TextStyle=\"0\">";
+    out += Cell("PinX", x) + Cell("PinY", y);
+    out += Cell("Width", w) + Cell("Height", h);
+    out += CellF("LocPinX", Num(std::atof(w.c_str()) / 2), "Width*0.5");
+    out += CellF("LocPinY", Num(std::atof(h.c_str()) / 2), "Height*0.5");
+    out += Cell("Angle", Num(-JNum(s, "angle", 0)));
+    out += Cell("FlipX", "0") + Cell("FlipY", "0");
+    out += Cell("ResizeMode", "0");
+
+    if (hasFill) {
+        out += Cell("FillPattern", "1") + Cell("FillForegnd", fill) + Cell("FillBkgnd", "#FFFFFF");
+        if (opacity < 0.999) out += Cell("FillForegndTrans", Num(1.0 - opacity));
+    } else {
+        out += Cell("FillPattern", "0");
+    }
+    if (hasLine) {
+        out += Cell("LinePattern", "1") + Cell("LineColor", line) + Cell("LineWeight", Num(lineWidth / kPxPerInch));
+        if (opacity < 0.999) out += Cell("LineColorTrans", Num(1.0 - opacity));
+    } else {
+        out += Cell("LinePattern", "0");
+    }
+
+    double corner = JNum(st, "cornerRadius", 0);
+    if (corner > 0.01 && type != "connector" && type != "path" && type != "ellipse") {
+        out += Cell("Rounding", Num(corner / kPxPerInch));
+    }
+
+    if (type == "connector") {
+        if (st.value("arrowEnd", true)) out += Cell("EndArrow", "4");
+        if (st.value("arrowBegin", false)) out += Cell("BeginArrow", "4");
+    }
+
+    std::string text = JStr(s, "text");
+    if (!text.empty() && type != "connector") {
+        std::string valign = JStr(font, "vAlign", "middle");
+        out += Cell("VerticalAlign", valign == "top" ? "0" : (valign == "bottom" ? "2" : "1"));
+    }
+
+    out += geometry;
+
+    if (!text.empty() && type != "connector") {
+        std::string family = JStr(font, "family", "Segoe UI");
+        double sizePx = JNum(font, "size", 14);
+        std::string color = JStr(font, "color", "#333333");
+        bool bold = font.value("bold", false);
+        int styleFlag = bold ? 1 : 0;
+        // JSON 中字号是 CSS px（96 DPI），Visio 的 Size 单位是英寸
+        out += "<Section N=\"Character\" IX=\"0\"><Row IX=\"0\">" +
+               Cell("Font", family) + Cell("Size", Num(sizePx / kPxPerInch)) +
+               Cell("Color", color) + Cell("Style", std::to_string(styleFlag)) + "</Row></Section>";
+
+        std::string align = JStr(font, "align", "center");
+        int horz = align == "left" ? 0 : (align == "right" ? 2 : 1);
+        out += "<Section N=\"Paragraph\" IX=\"0\"><Row IX=\"0\">" +
+               Cell("HorzAlign", std::to_string(horz)) + "</Row></Section>";
+    }
+
+    // 自定义数据：组合归属 / 类型 / 连接线粘附 / 交互 / 动态面板（P4）
+    std::string user;
+    if (!item.groupChain.empty()) {
+        user += "<Row N=\"VXGroup\">" + Cell("Value", item.groupChain) + Cell("Prompt", "") + "</Row>";
+    }
+    if (type == "panel") {
+        user += "<Row N=\"VXType\">" + Cell("Value", "panel") + Cell("Prompt", "") + "</Row>";
+        auto panelIt = s.find("panel");
+        if (panelIt != s.end() && panelIt->is_object()) {
+            user += "<Row N=\"VXPanel\">" + Cell("Value", panelIt->dump()) + Cell("Prompt", "") + "</Row>";
+        }
+    }
+    if (s.contains("interactions") && s["interactions"].is_array() && !s["interactions"].empty()) {
+        user += "<Row N=\"VXInteractions\">" + Cell("Value", s["interactions"].dump()) + Cell("Prompt", "") + "</Row>";
+    }
+    if (type == "connector") {
+        user += "<Row N=\"VXType\">" + Cell("Value", "connector") + Cell("Prompt", "") + "</Row>";
+        auto glueIt = s.find("glue");
+        if (glueIt != s.end() && glueIt->is_object()) {
+            std::string gb = JStr(*glueIt, "begin");
+            std::string ge = JStr(*glueIt, "end");
+            if (!gb.empty()) user += "<Row N=\"VXGlueBegin\">" + Cell("Value", gb) + Cell("Prompt", "") + "</Row>";
+            if (!ge.empty()) user += "<Row N=\"VXGlueEnd\">" + Cell("Value", ge) + Cell("Prompt", "") + "</Row>";
+        }
+        user += "<Row N=\"VXRoute\">" + Cell("Value", JStr(s, "route", "ortho")) + Cell("Prompt", "") + "</Row>";
+        if (hasConnEnds) {
+            user += "<Row N=\"VXBeginX\">" + Cell("Value", Num(connBeginX / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
+            user += "<Row N=\"VXBeginY\">" + Cell("Value", Num(pageHIn - connBeginY / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
+            user += "<Row N=\"VXEndX\">" + Cell("Value", Num(connEndX / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
+            user += "<Row N=\"VXEndY\">" + Cell("Value", Num(pageHIn - connEndY / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
+        }
+    }
+    if (!user.empty()) out += "<Section N=\"User\">" + user + "</Section>";
+
+    if (!text.empty() && type != "connector") {
+        out += "<Text>" + XmlEscape(text) + "</Text>";
+    }
+
+    out += "</Shape>";
+    return out;
+}
+
+std::string WritePageXml(const nlohmann::json& page, std::string& err) {
+    double pageW = JNum(page.value("size", nlohmann::json::object()), "w", 800);
+    double pageH = JNum(page.value("size", nlohmann::json::object()), "h", 1100);
+    double pageWIn = pageW / kPxPerInch;
+    double pageHIn = pageH / kPxPerInch;
+
+    std::vector<Item> items;
+    auto shapesIt = page.find("shapes");
+    if (shapesIt != page.end()) CollectShapes(*shapesIt, "", items);
+
+    std::map<std::string, const nlohmann::json*> byId;
+    for (const Item& it : items) byId[JStr(*it.sh, "id")] = it.sh;
+
+    std::string xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<PageContents xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xml:space=\"preserve\">";
+
+    xml += "<Shapes>";
+    int numeric = 1;
+    for (const Item& it : items) {
+        xml += BuildShapeXml(it, pageHIn, byId, numeric++);
+    }
+    xml += "</Shapes>";
+
+    // 图层
+    auto layersIt = page.find("layers");
+    if (layersIt != page.end() && layersIt->is_array() && !layersIt->empty()) {
+        xml += "<Layers>";
+        int lidx = 0;
+        for (const auto& l : *layersIt) {
+            if (!l.is_object()) continue;
+            std::string name = JStr(l, "name", "图层-" + std::to_string(lidx + 1));
+            xml += "<Layer ID=\"" + std::to_string(lidx) + "\" Name=\"" + XmlEscape(name) + "\" NameU=\"" +
+                   XmlEscape(name) + "\">";
+            xml += Cell("Visible", l.value("visible", true) ? "1" : "0");
+            xml += Cell("Print", "1") + Cell("Active", "0") +
+                   Cell("Lock", l.value("locked", false) ? "1" : "0") +
+                   Cell("Snap", "1") + Cell("Glue", "1") + Cell("Color", "0");
+            xml += "</Layer>";
+            ++lidx;
+        }
+        xml += "</Layers>";
+    }
+
+    xml += "</PageContents>";
+    (void)err;
+    return xml;
+}
+
+std::string CoreXml(const std::string& title) {
+    std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+    gmtime_s(&tmv, &now);
+    char ts[32];
+    std::snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ", tmv.tm_year + 1900, tmv.tm_mon + 1,
+                  tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+           "<cp:coreProperties "
+           "xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" "
+           "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+           "xmlns:dcterms=\"http://purl.org/dc/terms/\" "
+           "xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" "
+           "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">"
+           "<dc:title>" + XmlEscape(title) + "</dc:title>"
+           "<dc:creator>Visioxure</dc:creator>"
+           "<cp:lastModifiedBy>Visioxure</cp:lastModifiedBy>"
+           "<dcterms:created xsi:type=\"dcterms:W3CDTF\">" + std::string(ts) + "</dcterms:created>"
+           "<dcterms:modified xsi:type=\"dcterms:W3CDTF\">" + std::string(ts) + "</dcterms:modified>"
+           "</cp:coreProperties>";
+}
+
+}  // namespace
+
+std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
+    err.clear();
+    auto pagesIt = doc.find("pages");
+    if (pagesIt == doc.end() || !pagesIt->is_array() || pagesIt->empty()) {
+        err = "文档没有页面";
+        return {};
+    }
+
+    Package pkg;
+
+    std::string contentTypes =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" "
+        "ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/docProps/core.xml\" "
+        "ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
+        "<Override PartName=\"/docProps/app.xml\" "
+        "ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
+        "<Override PartName=\"/visio/document.xml\" "
+        "ContentType=\"application/vnd.ms-visio.drawing.main+xml\"/>"
+        "<Override PartName=\"/visio/pages/pages.xml\" ContentType=\"application/vnd.ms-visio.pages+xml\"/>"
+        "<Override PartName=\"/visio/windows.xml\" ContentType=\"application/vnd.ms-visio.windows+xml\"/>";
+
+    std::string rootRels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" "
+        "Type=\"http://schemas.microsoft.com/visio/2010/relationships/document\" "
+        "Target=\"visio/document.xml\"/>"
+        "<Relationship Id=\"rId2\" "
+        "Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" "
+        "Target=\"docProps/core.xml\"/>"
+        "<Relationship Id=\"rId3\" "
+        "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" "
+        "Target=\"docProps/app.xml\"/>"
+        "</Relationships>";
+
+    std::string documentXml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<VisioDocument xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xml:space=\"preserve\">"
+        "<DocumentSettings TopPage=\"0\" DefaultTextStyle=\"0\" DefaultLineStyle=\"0\" "
+        "DefaultFillStyle=\"0\" DefaultGuideStyle=\"0\">"
+        "<GlueSettings>9</GlueSettings><SnapSettings>65847</SnapSettings>"
+        "<SnapExtensions>34</SnapExtensions>"
+        "</DocumentSettings>"
+        "<StyleSheets>"
+        "<StyleSheet ID=\"0\" NameU=\"No Style\" IsCustomNameU=\"1\" Name=\"No Style\" IsCustomName=\"1\">"
+        "<Cell N=\"EnableLineProps\" V=\"1\"/><Cell N=\"EnableFillProps\" V=\"1\"/>"
+        "<Cell N=\"EnableTextProps\" V=\"1\"/><Cell N=\"HideForApply\" V=\"0\"/>"
+        "<Cell N=\"LineWeight\" V=\"0.01041666666666667\"/><Cell N=\"LineColor\" V=\"#000000\"/>"
+        "<Cell N=\"LinePattern\" V=\"1\"/><Cell N=\"Rounding\" V=\"0\"/>"
+        "<Cell N=\"FillForegnd\" V=\"#FFFFFF\"/><Cell N=\"FillBkgnd\" V=\"#FFFFFF\"/>"
+        "<Cell N=\"FillPattern\" V=\"1\"/><Cell N=\"ShdwPattern\" V=\"0\"/>"
+        "<Cell N=\"TextBkgnd\" V=\"0\"/><Cell N=\"VerticalAlign\" V=\"1\"/>"
+        "</StyleSheet>"
+        "</StyleSheets>"
+        "</VisioDocument>";
+
+    std::string documentRels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.microsoft.com/visio/2010/relationships/pages\" "
+        "Target=\"pages/pages.xml\"/>"
+        "<Relationship Id=\"rId2\" Type=\"http://schemas.microsoft.com/visio/2010/relationships/windows\" "
+        "Target=\"windows.xml\"/>"
+        "</Relationships>";
+
+    std::string windowsXml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Windows ClientWidth=\"1920\" ClientHeight=\"900\" "
+        "xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xml:space=\"preserve\">"
+        "<Window ID=\"0\" WindowType=\"Drawing\" WindowState=\"1073741824\" ContainerType=\"Page\" Page=\"0\" "
+        "ViewScale=\"-1\" ViewCenterX=\"4\" ViewCenterY=\"5.5\">"
+        "<ShowRulers>1</ShowRulers><ShowGrid>1</ShowGrid><ShowPageBreaks>1</ShowPageBreaks>"
+        "<ShowGuides>1</ShowGuides><ShowConnectionPoints>1</ShowConnectionPoints>"
+        "<GlueSettings>9</GlueSettings><SnapSettings>65847</SnapSettings><SnapExtensions>34</SnapExtensions>"
+        "<SnapAngles/><DynamicGridEnabled>1</DynamicGridEnabled><TabSplitterPos>0.5</TabSplitterPos>"
+        "</Window></Windows>";
+
+    std::string pagesXml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Pages xmlns=\"http://schemas.microsoft.com/office/visio/2012/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xml:space=\"preserve\">";
+
+    std::string pagesRels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">";
+
+    int index = 0;
+    for (const auto& page : *pagesIt) {
+        if (!page.is_object()) continue;
+        ++index;
+        std::string name = JStr(page, "name", "页面-" + std::to_string(index));
+        nlohmann::json sizeObj = page.value("size", nlohmann::json::object());
+        double pageWIn = JNum(sizeObj, "w", 800) / kPxPerInch;
+        double pageHIn = JNum(sizeObj, "h", 1100) / kPxPerInch;
+
+        std::string partName = "visio/pages/page" + std::to_string(index) + ".xml";
+        std::string errLocal;
+        std::string pageXml = WritePageXml(page, errLocal);
+        pkg.Add(partName, pageXml);
+        contentTypes += "<Override PartName=\"/" + partName + "\" ContentType=\"application/vnd.ms-visio.page+xml\"/>";
+
+        pagesXml += "<Page ID=\"" + std::to_string(index - 1) + "\" Name=\"" + XmlEscape(name) +
+                    "\" NameU=\"" + XmlEscape(name) + "-" + std::to_string(index) +
+                    "\" ViewScale=\"-1\" ViewCenterX=\"" + Num(pageWIn / 2) + "\" ViewCenterY=\"" +
+                    Num(pageHIn / 2) + "\">";
+        pagesXml += "<PageSheet LineStyle=\"0\" FillStyle=\"0\" TextStyle=\"0\">";
+        pagesXml += Cell("PageWidth", Num(pageWIn));
+        pagesXml += Cell("PageHeight", Num(pageHIn));
+        pagesXml += Cell("PageScale", "1") + Cell("DrawingScale", "1");
+        pagesXml += Cell("DrawingSizeType", "3") + Cell("DrawingScaleType", "0");
+        std::string orientation = JStr(sizeObj, "orientation", "portrait");
+        pagesXml += Cell("PrintPageOrientation", orientation == "landscape" ? "2" : "1");
+        pagesXml += Cell("PageLockReplace", "0") + Cell("PageLockDuplicate", "0");
+
+        // 页面/全局变量（P4）：写入 PageSheet 的 User 段，本应用往返保真
+        std::string userRows;
+        if (page.contains("variables") && page["variables"].is_array() && !page["variables"].empty()) {
+            userRows += "<Row N=\"VXVars\">" + Cell("Value", page["variables"].dump()) + Cell("Prompt", "") + "</Row>";
+        }
+        if (index == 1) {
+            auto docIt = doc.find("doc");
+            if (docIt != doc.end() && docIt->is_object()) {
+                auto varsIt = docIt->find("variables");
+                if (varsIt != docIt->end() && varsIt->is_array() && !varsIt->empty()) {
+                    userRows += "<Row N=\"VXGlobalVars\">" + Cell("Value", varsIt->dump()) + Cell("Prompt", "") + "</Row>";
+                }
+            }
+        }
+        if (!userRows.empty()) pagesXml += "<Section N=\"User\">" + userRows + "</Section>";
+        pagesXml += "</PageSheet>";
+        pagesXml += "<Rel r:id=\"rId" + std::to_string(index) + "\"/>";
+        pagesXml += "</Page>";
+
+        pagesRels += "<Relationship Id=\"rId" + std::to_string(index) +
+                     "\" Type=\"http://schemas.microsoft.com/visio/2010/relationships/page\" "
+                     "Target=\"page" + std::to_string(index) + ".xml\"/>";
+    }
+    pagesXml += "</Pages>";
+    pagesRels += "</Relationships>";
+
+    if (index == 0) {
+        err = "文档没有可用页面";
+        return {};
+    }
+
+    contentTypes += "</Types>";
+
+    pkg.Add("[Content_Types].xml", contentTypes);
+    pkg.Add("_rels/.rels", rootRels);
+    pkg.Add("visio/document.xml", documentXml);
+    pkg.Add("visio/_rels/document.xml.rels", documentRels);
+    pkg.Add("visio/windows.xml", windowsXml);
+    pkg.Add("visio/pages/pages.xml", pagesXml);
+    pkg.Add("visio/pages/_rels/pages.xml.rels", pagesRels);
+    pkg.Add("docProps/core.xml", CoreXml(JStr(doc, "title", "Visioxure 文档")));
+    pkg.Add("docProps/app.xml",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+            "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" "
+            "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">"
+            "<Application>Visioxure</Application><AppVersion>0.1.0</AppVersion></Properties>");
+
+    std::string bytes = pkg.ToBytes();
+    if (bytes.empty()) err = "打包 zip 失败";
+    return bytes;
+}
+
+}  // namespace vsx
