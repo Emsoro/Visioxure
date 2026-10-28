@@ -140,8 +140,9 @@ body {
 #canvas-area {
   position: relative;
   display: grid;
-  grid-template-columns: 22px 1fr;
-  grid-template-rows: 22px 1fr;
+  /* minmax(0,1fr)：防止画布内容反撑网格轨道（否则与 JS 同步 canvas 尺寸形成正反馈，尺寸膨胀至崩溃） */
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-rows: 22px minmax(0, 1fr);
   background: var(--canvas-bg);
   min-width: 0; min-height: 0;
 }
@@ -155,10 +156,11 @@ body {
 #ruler-left { grid-column: 1; grid-row: 2; height: 100%; display: block; }
 #canvas-scroll {
   grid-column: 2; grid-row: 2;
-  overflow: auto;
+  overflow: hidden;
   position: relative;
 }
-#canvas { display: block; }
+/* 绝对定位：canvas 不参与文档流，尺寸只由 JS 依据容器写入，杜绝互相撑大 */
+#canvas { display: block; position: absolute; left: 0; top: 0; }
 
 /* 页签条 */
 #page-tabs {

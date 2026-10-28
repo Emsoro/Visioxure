@@ -164,8 +164,10 @@
   }
 
   function drawOne(rc, horizontal, dpr, vp, mouse) {
-    const cssW = horizontal ? rc.clientWidth : 22;
-    const cssH = horizontal ? 22 : rc.clientHeight;
+    let cssW = horizontal ? rc.clientWidth : 22;
+    let cssH = horizontal ? 22 : rc.clientHeight;
+    // 尺寸防御：容器尺寸异常时跳过本帧，防止标尺背板膨胀拖垮渲染进程
+    if (cssW < 1 || cssH < 1 || cssW > 16384 || cssH > 16384) return;
     if (rc.width !== Math.round(cssW * dpr) || rc.height !== Math.round(cssH * dpr)) {
       rc.width = Math.round(cssW * dpr);
       rc.height = Math.round(cssH * dpr);

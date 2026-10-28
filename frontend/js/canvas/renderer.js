@@ -400,8 +400,11 @@
     const dpr = window.devicePixelRatio || 1;
     const w = host ? host.clientWidth : canvas.clientWidth;
     const h = host ? host.clientHeight : canvas.clientHeight;
-    // 同步 CSS 尺寸（canvas 默认 300×150，必须显式撑满容器）
-    if (canvas.style.width !== w + "px") { canvas.style.width = w + "px"; canvas.style.height = h + "px"; }
+    // 尺寸防御：容器尺寸异常（布局未就绪/被内容反撑）时跳过本帧，避免背板像素爆炸导致渲染进程崩溃
+    if (w < 1 || h < 1 || w > 16384 || h > 16384) return;
+    // 同步 CSS 尺寸（canvas 为绝对定位，尺寸完全由此写入）
+    if (canvas.style.width !== w + "px") canvas.style.width = w + "px";
+    if (canvas.style.height !== h + "px") canvas.style.height = h + "px";
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
