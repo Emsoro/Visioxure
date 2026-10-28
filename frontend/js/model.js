@@ -68,7 +68,8 @@ window.VX = window.VX || {};
     }
     if (type === "connector") {
       return { line: "#37474F", lineWidth: 1.5, arrowEnd: true, arrowBegin: false,
-               arrowEndKind: "arrow", arrowBeginKind: "none", opacity: 1,
+               arrowEndKind: "arrow", arrowBeginKind: "none",
+               arrowEndType: 4, arrowBeginType: 0, arrowEndSize: 2, arrowBeginSize: 2, opacity: 1,
                font: { family: "Segoe UI", size: 12, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
     }
     if (type === "panel") {
@@ -124,6 +125,32 @@ window.VX = window.VX || {};
     renamePage(id, name) {
       const p = this.page(id);
       if (p && name) { p.name = name; state.dirty = true; emit("pagechange"); emit("change"); }
+    },
+    deletePage(id) {
+      if (doc.pages.length <= 1) return false;
+      const i = doc.pages.findIndex((p) => p.id === id);
+      if (i < 0) return false;
+      doc.pages.splice(i, 1);
+      if (currentPageId === id) {
+        currentPageId = doc.pages[Math.min(i, doc.pages.length - 1)].id;
+        state.selection = [];
+        state.selGuides = [];
+      }
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+      return true;
+    },
+    movePage(id, delta) {
+      const i = doc.pages.findIndex((p) => p.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= doc.pages.length) return false;
+      const [p] = doc.pages.splice(i, 1);
+      doc.pages.splice(j, 0, p);
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+      return true;
     },
 
     // ---- 形状 ----

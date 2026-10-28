@@ -56,11 +56,8 @@
   <div id="toolbar">
     <div class="tool-group" id="tools">
       <button class="tool-btn active" data-tool="select" title="选择 (V)"><svg viewBox="0 0 16 16"><path d="M3 1l10 6-4.5 1L11 13l-2 1-2.5-5L3 11z"/></svg></button>
-      <button class="tool-btn" data-tool="rect" title="矩形 (R)"><svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/></svg></button>
-      <button class="tool-btn" data-tool="ellipse" title="椭圆 (O)"><svg viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="5.5" ry="4.5"/></svg></button>
       <button class="tool-btn" data-tool="text" title="文本 (T)"><svg viewBox="0 0 16 16"><path d="M3 3h10v2H9v8H7V5H3z"/></svg></button>
       <button class="tool-btn" data-tool="connector" title="连接线 (C)"><svg viewBox="0 0 16 16"><circle cx="3.5" cy="12.5" r="2"/><circle cx="12.5" cy="3.5" r="2"/><path d="M5 11l6-6"/></svg></button>
-      <button class="tool-btn" data-tool="image" title="图片 (I)"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="M4 12l3-3 2 2 3-3 2 2"/></svg></button>
     </div>
     <div class="tool-sep"></div>
     <div class="tool-group">
@@ -80,20 +77,19 @@
     <!-- 左侧面板 -->
     <aside id="left-panel">
       <div class="panel-tabs" data-tabs>
-        <span class="panel-tab active" data-tab="pages">页面树</span>
-        <span class="panel-tab" data-tab="components">组件库</span>
-        <span class="panel-tab" data-tab="stencils">形状库</span>
+        <span class="panel-tab active" data-tab="stencils">形状库</span>
+        <span class="panel-tab" data-tab="pages">页面树</span>
+        <!-- 组件库暂未启用，隐藏（去掉 hidden 即可恢复） -->
+        <span class="panel-tab hidden" data-tab="components">组件库</span>
       </div>
-      <div class="panel-body" data-tab-page="pages">
-        <div class="tree-item page-item active" draggable="true">
-          <span class="tree-icon page"></span>页面-1
-        </div>
-        <div class="panel-hint">双击重命名 · 右键更多操作（P2 接入）</div>
+      <div class="panel-body" data-tab-page="stencils" id="stencil-panel"></div>
+      <div class="panel-body hidden" data-tab-page="pages">
+        <div id="page-tree"></div>
+        <div class="panel-hint">双击重命名 · 右键更多操作</div>
       </div>
       <div class="panel-body hidden" data-tab-page="components">
         <div class="panel-hint">暂无组件。<br>组件（母版）可复用到任意页面，P2 接入。</div>
       </div>
-      <div class="panel-body hidden" data-tab-page="stencils" id="stencil-panel"></div>
     </aside>
 
     <!-- 画布区域 -->
@@ -104,10 +100,6 @@
       <div id="canvas-scroll">
         <canvas id="canvas">您的浏览器不支持 Canvas</canvas>
       </div>
-      <div id="page-tabs">
-        <span class="page-tab active">页面-1</span>
-        <span class="page-tab-add" title="新建页面">+</span>
-      </div>
     </div>
 
     <!-- 右侧检查器 -->
@@ -117,12 +109,13 @@
         <span class="panel-tab" data-tab="interact">交互</span>
         <span class="panel-tab" data-tab="notes">注释</span>
         <span class="panel-tab" data-tab="layers">图层</span>
+        <button class="panel-collapse" id="btn-right-collapse" title="折叠面板">
+          <svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        </button>
       </div>
       <div class="panel-body" data-tab-page="style" id="style-panel"></div>
       <div class="panel-body hidden" data-tab-page="interact" id="interact-panel"></div>
-      <div class="panel-body hidden" data-tab-page="notes">
-        <div class="panel-hint">元素注释 / 链接 / 脚本配置（P5 接入）</div>
-      </div>
+      <div class="panel-body hidden" data-tab-page="notes" id="notes-panel"></div>
       <div class="panel-body hidden" data-tab-page="layers">
         <div id="layer-panel"></div>
         <button class="btn-full" id="btn-add-layer">+ 新建图层</button>
@@ -158,6 +151,7 @@
 <script src="js/interact.js"></script>
 <script src="js/preview.js"></script>
 <script src="js/inspect.js"></script>
+<script src="js/meta.js"></script>
 <script src="js/style.js"></script>
 <script src="js/fileio.js"></script>
 <script src="js/app.js" defer></script>

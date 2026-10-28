@@ -76,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
   VX.Editor.init();
   if (VX.StylePanel) VX.StylePanel.init();
   if (VX.Inspect) VX.Inspect.init();
+  if (VX.Meta) VX.Meta.init();
   VX.FileIO.init();
   initPanelTabs();
   initTools();

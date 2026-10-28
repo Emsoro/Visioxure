@@ -40,13 +40,63 @@ std::map<std::string, std::string> ReadCells(const XmlNode& shape) {
     return cells;
 }
 
+// Visio 保存时会把 User 单元格的值清成 V="0"、真实内容留在公式 F="..." 里，
+// 因此读取时优先用 V，缺失/为 0 时回退到 F。
+// F 可能是简单字符串（"文本"），也可能是多行拼接（"第一行"&CHAR(10)&"第二行"），
+// 这里按 Visio 字符串公式语义求值：还原双写引号、把 CHAR(10) 还原成换行。
+std::string ParseStringFormula(const std::string& f) {
+    std::string out;
+    bool quoted = false;
+    size_t i = 0;
+    while (i < f.size()) {
+        char ch = f[i];
+        if (ch == ' ' || ch == '\t' || ch == '&' || ch == '+') {
+            ++i;
+            continue;
+        }
+        if (ch == '"') {
+            ++i;
+            quoted = true;
+            while (i < f.size()) {
+                if (f[i] == '"' && i + 1 < f.size() && f[i + 1] == '"') {
+                    out.push_back('"');
+                    i += 2;
+                    continue;
+                }
+                if (f[i] == '"') {
+                    ++i;
+                    break;
+                }
+                out.push_back(f[i++]);
+            }
+            continue;
+        }
+        if (f.compare(i, 8, "CHAR(10)") == 0) {
+            out.push_back('\n');
+            i += 8;
+            quoted = true;
+            continue;
+        }
+        out.push_back(f[i++]);
+    }
+    return quoted ? out : f;
+}
+
+std::string UserCellValue(const XmlNode& cell) {
+    std::string v = cell.attr("V");
+    if (!v.empty() && v != "0") return v;
+    std::string f = cell.attr("F");
+    if (!f.empty()) return ParseStringFormula(f);
+    return v;
+}
+
 std::string UserValue(const XmlNode& shape, const std::string& rowName) {
     for (const XmlNode& sec : shape.children) {
         if (sec.tag != "Section" || sec.attr("N") != "User") continue;
         for (const XmlNode& row : sec.children) {
             if (row.tag != "Row" || row.attr("N") != rowName) continue;
             for (const XmlNode& c : row.children) {
-                if (c.tag == "Cell" && c.attr("N") == "Value") return c.attr("V");
+                if (c.tag == "Cell" && c.attr("N") == "Value") return UserCellValue(c);
             }
         }
     }
@@ -276,6 +326,21 @@ bool IsLineCell(const std::string& cell) {
 }
 bool IsFillCell(const std::string& cell) {
     return cell.rfind("Fill", 0) == 0 || cell.rfind("Shdw", 0) == 0;
+}
+
+// Visio 箭头类型号（BeginArrow/EndArrow，0~45）→ 编辑器内部箭头形状名
+// 0=无；1/3/7/8/12/25~27=开口；2/4~6/13=实心；9=竖线；10=圆点；11/22=菱形；14~16=空心三角
+const char* ArrowKindOfType(int t) {
+    switch (t) {
+        case 0: return "none";
+        case 1: case 3: case 7: case 8: case 12: case 25: case 26: case 27: return "open";
+        case 2: case 4: case 5: case 6: case 13: return "arrow";
+        case 9: return "bar";
+        case 10: return "dot";
+        case 11: case 22: return "diamond";
+        case 14: case 15: case 16: return "triangle";
+        default: return "arrow";
+    }
 }
 
 // 沿样式表链查找单元格（F="Inh" 表示向同表的父样式继承）
@@ -610,9 +675,23 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
             }
             shape["points"] = pts;
         }
-        std::string ea = ResolveCell(src, cells, styles, "EndArrow");
-        style["arrowEnd"] = ea.empty() ? true : (static_cast<int>(P2D(ea, 0)) != 0);
-        style["arrowBegin"] = static_cast<int>(P2D(ResolveCell(src, cells, styles, "BeginArrow"), 0)) != 0;
+        // 箭头：保留 Visio 原始类型号（0~45）与尺寸级别（0~6），供保存时原样写回
+        int endType = static_cast<int>(P2D(ResolveCell(src, cells, styles, "EndArrow"), 0));
+        int beginType = static_cast<int>(P2D(ResolveCell(src, cells, styles, "BeginArrow"), 0));
+        int endSize = static_cast<int>(P2D(ResolveCell(src, cells, styles, "EndArrowSize"), 2));
+        int beginSize = static_cast<int>(P2D(ResolveCell(src, cells, styles, "BeginArrowSize"), 2));
+        endType = std::max(0, std::min(45, endType));
+        beginType = std::max(0, std::min(45, beginType));
+        endSize = std::max(0, std::min(6, endSize));
+        beginSize = std::max(0, std::min(6, beginSize));
+        style["arrowEnd"] = endType != 0;
+        style["arrowBegin"] = beginType != 0;
+        style["arrowEndType"] = endType;
+        style["arrowBeginType"] = beginType;
+        style["arrowEndSize"] = endSize;
+        style["arrowBeginSize"] = beginSize;
+        style["arrowEndKind"] = ArrowKindOfType(endType);
+        style["arrowBeginKind"] = ArrowKindOfType(beginType);
         shape["style"] = style;
 
         std::string gb = UserValue(sh, "VXGlueBegin");
@@ -661,6 +740,23 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
             }
         }
     }
+
+    // P5：注释 / 链接 / 脚本（本应用写入的 User 段）
+    nlohmann::json meta = nlohmann::json::object();
+    std::string notesRaw = UserValue(sh, "VXNotes");
+    if (!notesRaw.empty()) meta["notes"] = notesRaw;
+    auto readArray = [&](const char* row, const char* key) {
+        std::string raw = UserValue(sh, row);
+        if (raw.empty()) return;
+        try {
+            nlohmann::json j = nlohmann::json::parse(raw);
+            if (j.is_array() && !j.empty()) meta[key] = j;
+        } catch (...) {
+        }
+    };
+    readArray("VXLinks", "links");
+    readArray("VXScripts", "scripts");
+    if (!meta.empty()) shape["meta"] = meta;
     return shape;
 }
 
@@ -716,7 +812,7 @@ void ReadPageUserVars(const XmlNode& pageNode, nlohmann::json& pageVars, nlohman
             if (rn != "VXVars" && rn != "VXGlobalVars") continue;
             std::string raw;
             for (const XmlNode& c : row.children) {
-                if (c.tag == "Cell" && c.attr("N") == "Value") raw = c.attr("V");
+                if (c.tag == "Cell" && c.attr("N") == "Value") raw = UserCellValue(c);
             }
             if (raw.empty()) continue;
             try {

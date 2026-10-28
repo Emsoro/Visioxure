@@ -42,3 +42,4 @@ __pycache__/
 # 临时测试输出
 canvas.png
 *.tmp
+build_basic.vsdx

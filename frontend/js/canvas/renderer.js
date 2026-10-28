@@ -78,8 +78,8 @@
       c.stroke();
     }
 
-    drawArrow(c, endFrom, pts[pts.length - 1], arrowKind(st.arrowEndKind, st.arrowEnd !== false), lw);
-    drawArrow(c, beginFrom, pts[0], arrowKind(st.arrowBeginKind, !!st.arrowBegin), lw);
+    drawArrow(c, endFrom, pts[pts.length - 1], arrowKind(st.arrowEndKind, st.arrowEnd !== false), lw, st.arrowEndSize);
+    drawArrow(c, beginFrom, pts[0], arrowKind(st.arrowBeginKind, !!st.arrowBegin), lw, st.arrowBeginSize);
 
     c.globalAlpha = 1;
     if (label) drawConnectorLabel(c, s, pts, label);
@@ -114,14 +114,21 @@
     return flag ? "arrow" : "none";
   }
 
+  // Visio 箭头尺寸级别 0~6 → 缩放系数（2 为默认/中等）
+  const ARROW_SIZE_SCALE = [0.55, 0.7, 1, 1.3, 1.6, 1.9, 2.2];
+  function arrowScale(level) {
+    if (typeof level !== "number" || !isFinite(level)) return 1;
+    return ARROW_SIZE_SCALE[Math.max(0, Math.min(6, Math.round(level)))];
+  }
+
   // 在 tip 处按 from→tip 方向画箭头
-  function drawArrow(c, from, tip, kind, lw) {
+  function drawArrow(c, from, tip, kind, lw, sizeLevel) {
     if (!kind || kind === "none") return;
     const dx = tip.x - from.x, dy = tip.y - from.y;
     const len = Math.hypot(dx, dy);
     if (len < 0.001) return;
     const ang = Math.atan2(dy, dx);
-    const size = 7 + Math.max(1, lw) * 2.2;
+    const size = (7 + Math.max(1, lw) * 2.2) * arrowScale(sizeLevel);
     const color = c.strokeStyle;
     c.save();
     c.lineWidth = Math.max(1.2, lw);

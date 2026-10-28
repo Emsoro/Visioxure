@@ -56,6 +56,74 @@ std::string CellF(const std::string& name, const std::string& value, const std::
     return "<Cell N=\"" + name + "\" V=\"" + XmlEscape(value) + "\" F=\"" + XmlEscape(formula) + "\"/>";
 }
 
+// 自定义数据行（User 段）：本应用元数据往返保真，Visio 视作用户定义单元格。
+// Visio 只认公式 F，故除 V 外同时写 F：文本/JSON 用带引号的字符串公式（内部引号双写），
+// 这样在 Visio 中另存后值不会被清成 0。公式里不能直接含换行，
+// 因此多行文本按行拆成字符串再用 CHAR(10) 连接。
+std::string QuotedFormula(const std::string& value) {
+    std::string f = "\"";
+    for (char ch : value) {
+        if (ch == '"') f += "\"\"";
+        else f.push_back(ch);
+    }
+    f.push_back('"');
+    return f;
+}
+
+std::string StringFormula(const std::string& value) {
+    if (value.find('\n') == std::string::npos && value.find('\r') == std::string::npos) {
+        return QuotedFormula(value);
+    }
+    std::string f;
+    size_t start = 0;
+    while (true) {
+        size_t nl = value.find('\n', start);
+        std::string line = nl == std::string::npos ? value.substr(start) : value.substr(start, nl - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!f.empty()) f += "&CHAR(10)&";
+        f += QuotedFormula(line);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return f;
+}
+
+std::string UserRow(const std::string& name, const std::string& value) {
+    return "<Row N=\"" + name + "\">" + CellF("Value", value, StringFormula(value)) + Cell("Prompt", "") + "</Row>";
+}
+
+// 数值型自定义行：F 用裸数字，Visio 会保留其数值 V
+std::string UserRowNum(const std::string& name, const std::string& value) {
+    return "<Row N=\"" + name + "\">" + CellF("Value", value, value) + Cell("Prompt", "") + "</Row>";
+}
+
+// 内部箭头形状名 → Visio 箭头类型号（0=无，4=实心，1=开口，14=空心三角，10=圆点，22=菱形，9=竖线）
+int ArrowTypeOfKind(const std::string& kind) {
+    if (kind == "none") return 0;
+    if (kind == "open") return 1;
+    if (kind == "triangle") return 14;
+    if (kind == "dot") return 10;
+    if (kind == "diamond") return 22;
+    if (kind == "bar") return 9;
+    return 4;
+}
+
+// 箭头类型：优先用读入时保留的 Visio 类型号（保证往返一致），否则由 kind / 旧布尔值推导
+int ArrowEndType(const nlohmann::json& st, const char* typeKey, const char* kindKey, const char* flagKey,
+                 bool flagDefault) {
+    auto t = st.find(typeKey);
+    if (t != st.end() && t->is_number()) return std::max(0, std::min(45, static_cast<int>(t->get<double>())));
+    std::string kind = JStr(st, kindKey);
+    if (!kind.empty()) return ArrowTypeOfKind(kind);
+    return st.value(flagKey, flagDefault) ? 4 : 0;
+}
+
+int ArrowSize(const nlohmann::json& st, const char* key) {
+    auto it = st.find(key);
+    if (it == st.end() || !it->is_number()) return 2;
+    return std::max(0, std::min(6, static_cast<int>(it->get<double>())));
+}
+
 // ---------- 连接线端点/布线（routing.js 的 C++ 移植，保证与编辑器一致性） ----------
 
 struct GlueRef {
@@ -414,8 +482,14 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     }
 
     if (type == "connector") {
-        if (st.value("arrowEnd", true)) out += Cell("EndArrow", "4");
-        if (st.value("arrowBegin", false)) out += Cell("BeginArrow", "4");
+        int endType = ArrowEndType(st, "arrowEndType", "arrowEndKind", "arrowEnd", true);
+        int beginType = ArrowEndType(st, "arrowBeginType", "arrowBeginKind", "arrowBegin", false);
+        out += Cell("BeginArrow", std::to_string(beginType));
+        out += Cell("EndArrow", std::to_string(endType));
+        int endSize = ArrowSize(st, "arrowEndSize");
+        int beginSize = ArrowSize(st, "arrowBeginSize");
+        if (endSize != 2) out += Cell("EndArrowSize", std::to_string(endSize));
+        if (beginSize != 2) out += Cell("BeginArrowSize", std::to_string(beginSize));
     }
 
     std::string text = JStr(s, "text");
@@ -446,33 +520,47 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     // 自定义数据：组合归属 / 类型 / 连接线粘附 / 交互 / 动态面板（P4）
     std::string user;
     if (!item.groupChain.empty()) {
-        user += "<Row N=\"VXGroup\">" + Cell("Value", item.groupChain) + Cell("Prompt", "") + "</Row>";
+        user += UserRow("VXGroup", item.groupChain);
     }
     if (type == "panel") {
-        user += "<Row N=\"VXType\">" + Cell("Value", "panel") + Cell("Prompt", "") + "</Row>";
+        user += UserRow("VXType", "panel");
         auto panelIt = s.find("panel");
         if (panelIt != s.end() && panelIt->is_object()) {
-            user += "<Row N=\"VXPanel\">" + Cell("Value", panelIt->dump()) + Cell("Prompt", "") + "</Row>";
+            user += UserRow("VXPanel", panelIt->dump());
         }
     }
     if (s.contains("interactions") && s["interactions"].is_array() && !s["interactions"].empty()) {
-        user += "<Row N=\"VXInteractions\">" + Cell("Value", s["interactions"].dump()) + Cell("Prompt", "") + "</Row>";
+        user += UserRow("VXInteractions", s["interactions"].dump());
+    }
+    // P5 元数据：注释 / 链接 / 脚本
+    auto metaIt = s.find("meta");
+    if (metaIt != s.end() && metaIt->is_object()) {
+        std::string notes = JStr(*metaIt, "notes");
+        if (!notes.empty()) user += UserRow("VXNotes", notes);
+        auto linksIt = metaIt->find("links");
+        if (linksIt != metaIt->end() && linksIt->is_array() && !linksIt->empty()) {
+            user += UserRow("VXLinks", linksIt->dump());
+        }
+        auto scriptsIt = metaIt->find("scripts");
+        if (scriptsIt != metaIt->end() && scriptsIt->is_array() && !scriptsIt->empty()) {
+            user += UserRow("VXScripts", scriptsIt->dump());
+        }
     }
     if (type == "connector") {
-        user += "<Row N=\"VXType\">" + Cell("Value", "connector") + Cell("Prompt", "") + "</Row>";
+        user += UserRow("VXType", "connector");
         auto glueIt = s.find("glue");
         if (glueIt != s.end() && glueIt->is_object()) {
             std::string gb = JStr(*glueIt, "begin");
             std::string ge = JStr(*glueIt, "end");
-            if (!gb.empty()) user += "<Row N=\"VXGlueBegin\">" + Cell("Value", gb) + Cell("Prompt", "") + "</Row>";
-            if (!ge.empty()) user += "<Row N=\"VXGlueEnd\">" + Cell("Value", ge) + Cell("Prompt", "") + "</Row>";
+            if (!gb.empty()) user += UserRow("VXGlueBegin", gb);
+            if (!ge.empty()) user += UserRow("VXGlueEnd", ge);
         }
-        user += "<Row N=\"VXRoute\">" + Cell("Value", JStr(s, "route", "ortho")) + Cell("Prompt", "") + "</Row>";
+        user += UserRow("VXRoute", JStr(s, "route", "ortho"));
         if (hasConnEnds) {
-            user += "<Row N=\"VXBeginX\">" + Cell("Value", Num(connBeginX / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
-            user += "<Row N=\"VXBeginY\">" + Cell("Value", Num(pageHIn - connBeginY / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
-            user += "<Row N=\"VXEndX\">" + Cell("Value", Num(connEndX / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
-            user += "<Row N=\"VXEndY\">" + Cell("Value", Num(pageHIn - connEndY / kPxPerInch)) + Cell("Prompt", "") + "</Row>";
+            user += UserRowNum("VXBeginX", Num(connBeginX / kPxPerInch));
+            user += UserRowNum("VXBeginY", Num(pageHIn - connBeginY / kPxPerInch));
+            user += UserRowNum("VXEndX", Num(connEndX / kPxPerInch));
+            user += UserRowNum("VXEndY", Num(pageHIn - connEndY / kPxPerInch));
         }
     }
     if (!user.empty()) out += "<Section N=\"User\">" + user + "</Section>";
@@ -686,14 +774,14 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
         // 页面/全局变量（P4）：写入 PageSheet 的 User 段，本应用往返保真
         std::string userRows;
         if (page.contains("variables") && page["variables"].is_array() && !page["variables"].empty()) {
-            userRows += "<Row N=\"VXVars\">" + Cell("Value", page["variables"].dump()) + Cell("Prompt", "") + "</Row>";
+            userRows += UserRow("VXVars", page["variables"].dump());
         }
         if (index == 1) {
             auto docIt = doc.find("doc");
             if (docIt != doc.end() && docIt->is_object()) {
                 auto varsIt = docIt->find("variables");
                 if (varsIt != docIt->end() && varsIt->is_array() && !varsIt->empty()) {
-                    userRows += "<Row N=\"VXGlobalVars\">" + Cell("Value", varsIt->dump()) + Cell("Prompt", "") + "</Row>";
+                    userRows += UserRow("VXGlobalVars", varsIt->dump());
                 }
             }
         }

@@ -181,12 +181,27 @@
       vars.local = {};
     }
 
+    // P5：元素级脚本（meta.scripts）在同一事件触发时执行，沙箱同 runScript
+    function runScripts(shape, event) {
+      const list = (shape.meta && shape.meta.scripts) || [];
+      for (const sc of list) {
+        if (!sc || !sc.code) continue;
+        if ((sc.event || "click") !== event) continue;
+        try {
+          new Function("shape", "page", "vars", sc.code)(shape, page(), vars);
+        } catch (e) {
+          console.warn("元素脚本失败:", e);
+        }
+      }
+    }
+
     function runPageLoad() {
       const p = page();
       if (!p) return;
       walk(p.shapes, (s) => {
         const list = (s.interactions || []).filter((i) => i.event === "pageload");
         for (const it of list) runActions(it.actions, s);
+        runScripts(s, "pageload");
       });
     }
 
@@ -206,6 +221,7 @@
       if (!shape) return;
       const list = (shape.interactions || []).filter((i) => (i.event || "click") === event);
       for (const it of list) runActions(it.actions, shape);
+      runScripts(shape, event);
     }
 
     function init() {

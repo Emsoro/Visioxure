@@ -506,12 +506,16 @@
       } else if (drag.mode === "create") {
         const s = VX.Model.shape(drag.shape.id);
         if (s && s.w < 6 && s.h < 6) {
-          VX.Model.updateShape(s.id, { x: snapVal(drag.startW.x), y: snapVal(drag.startW.y), w: 120, h: 80 });
+          // 单击未拖动：不创建形状，回滚本次操作
+          VX.History.cancel();
+          S().selection = [];
+          VX.Events.emit("selection");
+        } else {
+          VX.History.commit("创建" + drag.label);
+          S().selection = [drag.shape.id];
+          VX.Events.emit("selection");
+          if (drag.toolAfter === "text") openTextEditor(VX.Model.shape(drag.shape.id));
         }
-        VX.History.commit("创建" + drag.label);
-        S().selection = [drag.shape.id];
-        VX.Events.emit("selection");
-        if (drag.toolAfter === "text") openTextEditor(VX.Model.shape(drag.shape.id));
       } else if (drag.mode === "guide2") { /* 未用 */ }
       drag = null;
       VX.Renderer.invalidate();

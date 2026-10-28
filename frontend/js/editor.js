@@ -166,7 +166,7 @@
       }
 
       // 工具热键
-      const hotkeys = { v: "select", r: "rect", o: "ellipse", t: "text", c: "connector" };
+      const hotkeys = { v: "select", t: "text", c: "connector" };
       const tool = hotkeys[e.key.toLowerCase()];
       if (tool && !e.ctrlKey && !e.altKey) { VX.Tools.set(tool); }
     });
@@ -224,59 +224,137 @@
     if (r) r.style.opacity = VX.History.canRedo() ? "1" : "0.35";
   }
 
-  // ---------- 页面页签 ----------
-  function bindPageTabs() {
-    const bar = document.getElementById("page-tabs");
-    bar.addEventListener("click", (e) => {
-      if (e.target.classList.contains("page-tab-add")) {
-        VX.History.run("新建页面", () => VX.Model.addPage());
-        return;
-      }
-      const tab = e.target.closest(".page-tab");
-      if (tab && tab.dataset.page) VX.Model.setCurrentPage(tab.dataset.page);
+  // ---------- 页面树 ----------
+  function bindPageTree() {
+    const box = document.getElementById("page-tree");
+    box.addEventListener("click", (e) => {
+      const item = e.target.closest(".tree-item");
+      if (item && item.dataset.page) VX.Model.setCurrentPage(item.dataset.page);
     });
-    bar.addEventListener("dblclick", (e) => {
-      const tab = e.target.closest(".page-tab");
-      if (!tab || !tab.dataset.page) return;
-      const input = document.createElement("input");
-      input.value = VX.Model.page(tab.dataset.page).name;
-      Object.assign(input.style, { width: "80px", fontSize: "12px", border: "1px solid #2f6fed", padding: "2px 4px" });
-      tab.textContent = "";
-      tab.appendChild(input);
-      input.focus();
-      input.select();
-      const commit = () => {
-        const name = input.value.trim();
-        if (name && name !== VX.Model.page(tab.dataset.page).name) {
-          VX.History.run("重命名页面", () => VX.Model.renamePage(tab.dataset.page, name));
-        } else {
-          renderPageTabs();
-        }
-      };
-      input.addEventListener("blur", commit);
-      input.addEventListener("keydown", (ev) => {
-        ev.stopPropagation();
-        if (ev.key === "Enter") input.blur();
-        if (ev.key === "Escape") { input.value = VX.Model.page(tab.dataset.page).name; input.blur(); }
-      });
+    box.addEventListener("dblclick", (e) => {
+      const item = e.target.closest(".tree-item");
+      if (item && item.dataset.page) startRenamePage(item);
+    });
+    box.addEventListener("contextmenu", (e) => {
+      const item = e.target.closest(".tree-item");
+      if (!item || !item.dataset.page) return;
+      e.preventDefault();
+      openPageMenu(e.clientX, e.clientY, item.dataset.page);
+    });
+    document.addEventListener("mousedown", onCtxOutside, true);
+    document.addEventListener("keydown", onCtxKey, true);
+    window.addEventListener("blur", closeCtxMenu);
+  }
+
+  function startRenamePage(item) {
+    const page = VX.Model.page(item.dataset.page);
+    if (!page) return;
+    const input = document.createElement("input");
+    input.value = page.name;
+    Object.assign(input.style, { width: "96px", fontSize: "12px", border: "1px solid #2f6fed", padding: "2px 4px" });
+    item.textContent = "";
+    item.appendChild(input);
+    input.focus();
+    input.select();
+    const commit = () => {
+      const name = input.value.trim();
+      if (name && name !== VX.Model.page(item.dataset.page).name) {
+        VX.History.run("重命名页面", () => VX.Model.renamePage(item.dataset.page, name));
+      } else {
+        renderPageTree();
+      }
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Enter") input.blur();
+      if (ev.key === "Escape") { input.value = VX.Model.page(item.dataset.page).name; input.blur(); }
     });
   }
 
-  function renderPageTabs() {
-    const bar = document.getElementById("page-tabs");
-    bar.innerHTML = "";
-    for (const p of VX.Model.doc.pages) {
-      const tab = document.createElement("span");
-      tab.className = "page-tab" + (p.id === VX.Model.currentPageId() ? " active" : "");
-      tab.dataset.page = p.id;
-      tab.textContent = p.name;
-      bar.appendChild(tab);
+  // ---------- 页面右键菜单 ----------
+  let ctxMenuEl = null;
+  function closeCtxMenu() {
+    if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
+  }
+
+  function openPageMenu(x, y, pageId) {
+    closeCtxMenu();
+    const pages = VX.Model.doc.pages;
+    const idx = pages.findIndex((p) => p.id === pageId);
+    const items = [
+      { text: "新增页面", act: () => VX.History.run("新建页面", () => VX.Model.addPage()) },
+      { sep: true },
+      {
+        text: "重命名",
+        act: () => {
+          const item = document.querySelector('#page-tree .tree-item[data-page="' + pageId + '"]');
+          if (item) startRenamePage(item);
+        },
+      },
+      {
+        text: "删除",
+        disabled: pages.length <= 1,
+        act: () => VX.History.run("删除页面", () => VX.Model.deletePage(pageId)),
+      },
+      { sep: true },
+      {
+        text: "上移",
+        disabled: idx <= 0,
+        act: () => VX.History.run("移动页面", () => VX.Model.movePage(pageId, -1)),
+      },
+      {
+        text: "下移",
+        disabled: idx < 0 || idx >= pages.length - 1,
+        act: () => VX.History.run("移动页面", () => VX.Model.movePage(pageId, 1)),
+      },
+    ];
+
+    const menu = document.createElement("div");
+    menu.className = "ctx-menu";
+    for (const it of items) {
+      if (it.sep) {
+        const sep = document.createElement("div");
+        sep.className = "ctx-sep";
+        menu.appendChild(sep);
+        continue;
+      }
+      const row = document.createElement("div");
+      row.className = "ctx-item" + (it.disabled ? " disabled" : "");
+      row.textContent = it.text;
+      if (!it.disabled) {
+        row.addEventListener("click", () => { closeCtxMenu(); it.act(); });
+      }
+      menu.appendChild(row);
     }
-    const add = document.createElement("span");
-    add.className = "page-tab-add";
-    add.title = "新建页面";
-    add.textContent = "+";
-    bar.appendChild(add);
+
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.min(x, window.innerWidth - rect.width - 8) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - rect.height - 8) + "px";
+    ctxMenuEl = menu;
+  }
+
+  function onCtxOutside(e) {
+    if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeCtxMenu();
+  }
+  function onCtxKey(e) {
+    if (e.key === "Escape") closeCtxMenu();
+  }
+
+  function renderPageTree() {
+    const box = document.getElementById("page-tree");
+    box.innerHTML = "";
+    for (const p of VX.Model.doc.pages) {
+      const item = document.createElement("div");
+      item.className = "tree-item page-item" + (p.id === VX.Model.currentPageId() ? " active" : "");
+      item.dataset.page = p.id;
+      const icon = document.createElement("span");
+      icon.className = "tree-icon page";
+      item.appendChild(icon);
+      item.appendChild(document.createTextNode(p.name));
+      box.appendChild(item);
+    }
   }
 
   // ---------- 状态栏 ----------
@@ -388,6 +466,30 @@
     VX.Model.on("layers", renderLayers);
   }
 
+  // ---------- 右侧面板折叠 ----------
+  function bindRightPanelCollapse() {
+    const main = document.getElementById("main");
+    const panel = document.getElementById("right-panel");
+    const btn = document.getElementById("btn-right-collapse");
+    if (!main || !panel || !btn) return;
+    const tabs = btn.parentElement;
+    btn.addEventListener("click", () => {
+      if (panel.classList.contains("collapsed")) {
+        panel.classList.remove("collapsed");
+        main.classList.remove("right-collapsed");
+        tabs.style.height = "";
+        btn.title = "折叠面板";
+      } else {
+        // 折叠前记录 tab 栏高度，折叠后沿用，避免变矮
+        const h = Math.round(tabs.getBoundingClientRect().height);
+        panel.classList.add("collapsed");
+        main.classList.add("right-collapsed");
+        tabs.style.height = h + "px";
+        btn.title = "展开面板";
+      }
+    });
+  }
+
   const Editor = {
     init() {
       canvas = document.getElementById("canvas");
@@ -399,22 +501,23 @@
       bindRulers();
       bindKeyboard();
       bindToolbar();
-      bindPageTabs();
+      bindPageTree();
       bindStatusbar();
       bindMenus();
       bindLayers();
+      bindRightPanelCollapse();
 
       // 形状库面板
       const sp = document.getElementById("stencil-panel");
       if (sp && VX.Stencils) VX.Stencils.renderPanel(sp);
 
-      VX.Model.on("pagechange", renderPageTabs);
+      VX.Model.on("pagechange", renderPageTree);
       VX.Model.on("selection", updateStatus);
       VX.Events.on("zoom", updateStatus);
       VX.Events.on("history", syncUndoRedo);
       VX.Events.on("tool", syncToolButtons);
 
-      renderPageTabs();
+      renderPageTree();
       renderLayers();
       updateStatus();
       syncUndoRedo();

@@ -68,7 +68,13 @@ json MakeDoc() {
 
     page["shapes"].push_back(json{{"id", "s1"}, {"type", "rect"}, {"x", 100}, {"y", 80}, {"w", 200},
                                   {"h", 48}, {"angle", 0}, {"z", 1}, {"layer", "l1"}, {"lock", false},
-                                  {"style", style("#4A90D9", "#2B6CB0")}, {"text", "登录"}});
+                                  {"style", style("#4A90D9", "#2B6CB0")}, {"text", "登录"},
+                                  {"meta", {{"notes", "登录按钮的说明\n第二行注释"},
+                                            {"links", json::array({{{"label", "文档"},
+                                                                    {"url", "https://example.com/doc"}}})},
+                                            {"scripts", json::array({{{"name", "命中"},
+                                                                      {"event", "click"},
+                                                                      {"code", "vars.hit = 'yes'"}}})}}}});
 
     page["shapes"].push_back(json{{"id", "s2"}, {"type", "ellipse"}, {"x", 400}, {"y", 80}, {"w", 120},
                                   {"h", 120}, {"angle", 0}, {"z", 2}, {"layer", "l1"}, {"lock", false},
@@ -108,7 +114,8 @@ json MakeDoc() {
                       {"layer", "l1"},
                       {"lock", false},
                       {"style", {{"line", "#37474F"}, {"lineWidth", 1.5}, {"arrowEnd", true},
-                                 {"arrowBegin", false}, {"opacity", 1.0}}},
+                                 {"arrowBegin", true}, {"arrowEndType", 22}, {"arrowBeginType", 1},
+                                 {"arrowEndSize", 5}, {"arrowBeginSize", 0}, {"opacity", 1.0}}},
                       {"glue", {{"begin", "s1:1"}, {"end", "s2:3"}}},
                       {"begin", {{"x", 300}, {"y", 104}}},
                       {"end", {{"x", 460}, {"y", 140}}},
@@ -419,6 +426,12 @@ int main(int argc, char** argv) {
                         std::printf(" glue=%s->%s", s["glue"].value("begin", "-").c_str(),
                                     s["glue"].value("end", "-").c_str());
                     }
+                    if (s.contains("meta") && s["meta"].is_object()) {
+                        const json& m = s["meta"];
+                        std::printf(" meta[notes=%zu links=%zu scripts=%zu]", m.value("notes", "").size(),
+                                    m.contains("links") ? m["links"].size() : 0,
+                                    m.contains("scripts") ? m["scripts"].size() : 0);
+                    }
                     std::printf("\n");
                     if (s.value("type", "") == "group") stack.push_back({s["children"], item.second + 1});
                 }
@@ -494,6 +507,17 @@ int main(int argc, char** argv) {
         Check(r1["style"].value("fill", "") == "#4A90D9", "s1 填充色保留");
         Check(r1.value("text", "") == "登录", "s1 文本保留");
         CheckNear(r1["style"].value("cornerRadius", 0.0), 6, 0.5, "s1 圆角保留");
+        // P5 元数据：注释 / 链接 / 脚本
+        const bool hasMeta = r1.contains("meta") && r1["meta"].is_object();
+        Check(hasMeta && r1["meta"].value("notes", "") == "登录按钮的说明\n第二行注释", "s1 多行注释保留");
+        Check(hasMeta && r1["meta"].contains("links") && r1["meta"]["links"].size() == 1 &&
+                  r1["meta"]["links"][0].value("label", "") == "文档" &&
+                  r1["meta"]["links"][0].value("url", "") == "https://example.com/doc",
+              "s1 链接保留");
+        Check(hasMeta && r1["meta"].contains("scripts") && r1["meta"]["scripts"].size() == 1 &&
+                  r1["meta"]["scripts"][0].value("event", "") == "click" &&
+                  r1["meta"]["scripts"][0].value("code", "") == "vars.hit = 'yes'",
+              "s1 脚本保留");
     }
 
     json e2 = FindShape(shapes, "s2");
@@ -516,6 +540,11 @@ int main(int argc, char** argv) {
         Check(c5["glue"].value("end", "") == "s2:3", "s5 终点粘附保留");
         CheckNear(c5["begin"].value("x", 0.0), 300, 0.5, "s5 起点 x 往返一致");
         CheckNear(c5["end"].value("x", 0.0), 400, 0.5, "s5 终点 x 往返一致（粘附到 s2 左边中点）");
+        // Visio 箭头类型号与尺寸级别原样往返
+        Check(c5["style"].value("arrowEndType", -1) == 22, "s5 终点箭头类型号 22 往返");
+        Check(c5["style"].value("arrowBeginType", -1) == 1, "s5 起点箭头类型号 1 往返");
+        Check(c5["style"].value("arrowEndSize", -1) == 5, "s5 终点箭头尺寸 5 往返");
+        Check(c5["style"].value("arrowBeginSize", -1) == 0, "s5 起点箭头尺寸 0 往返");
     }
 
     json g6 = FindShape(shapes, "s6");

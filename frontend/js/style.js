@@ -162,6 +162,19 @@
     { v: "bar", t: "竖线" },
   ];
 
+  // 内部箭头形状名 → Visio 箭头类型号（保存时写回 BeginArrow/EndArrow）
+  const ARROW_TYPES = { none: 0, open: 1, arrow: 4, triangle: 14, dot: 10, diamond: 22, bar: 9 };
+  // Visio 箭头尺寸级别 0~6（2 为默认）
+  const ARROW_SIZE_OPTS = [
+    { v: 0, t: "最小" },
+    { v: 1, t: "很小" },
+    { v: 2, t: "中" },
+    { v: 3, t: "大" },
+    { v: 4, t: "很大" },
+    { v: 5, t: "特大" },
+    { v: 6, t: "最大" },
+  ];
+
   // 旧文件的 arrowBegin/arrowEnd 是布尔值，新值为 kind 字符
   function arrowMode(s, which) {
     const st = s.style || {};
@@ -169,6 +182,12 @@
     if (typeof kind === "string" && kind) return kind;
     const flag = which === "begin" ? !!st.arrowBegin : st.arrowEnd !== false;
     return flag ? "arrow" : "none";
+  }
+
+  function arrowSizeOf(s, which) {
+    const st = s.style || {};
+    const v = which === "begin" ? st.arrowBeginSize : st.arrowEndSize;
+    return typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(6, Math.round(v))) : 2;
   }
 
   // 线型：分段按钮（手拖过的折线按“折线”显示）
@@ -243,9 +262,11 @@
           if (which === "begin") {
             st.arrowBeginKind = kind;
             st.arrowBegin = kind !== "none";
+            st.arrowBeginType = ARROW_TYPES[kind] || 0;
           } else {
             st.arrowEndKind = kind;
             st.arrowEnd = kind !== "none";
+            st.arrowEndType = ARROW_TYPES[kind] || 0;
           }
           s.style = st;
         }
@@ -257,6 +278,40 @@
 
     row.appendChild(label);
     row.appendChild(sel);
+
+    const sizeSel = document.createElement("select");
+    sizeSel.className = "sp-select sp-select-size";
+    for (const o of ARROW_SIZE_OPTS) {
+      const opt = document.createElement("option");
+      opt.value = String(o.v);
+      opt.textContent = o.t;
+      sizeSel.appendChild(opt);
+    }
+    const cs = commonVal(list, (s) => arrowSizeOf(s, which));
+    if (cs.mixed) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "多个值";
+      sizeSel.appendChild(opt);
+      sizeSel.value = "";
+    } else {
+      sizeSel.value = String(cs.value);
+    }
+    sizeSel.addEventListener("change", () => {
+      if (sizeSel.value === "") return;
+      const size = Number(sizeSel.value);
+      VX.History.run("修改箭头大小", () => {
+        for (const s of list) {
+          const st = Object.assign({}, s.style || {});
+          if (which === "begin") st.arrowBeginSize = size; else st.arrowEndSize = size;
+          s.style = st;
+        }
+        S().dirty = true;
+      });
+      VX.Model.emit("change");
+      VX.Renderer.invalidate();
+    });
+    row.appendChild(sizeSel);
     return row;
   }
 
