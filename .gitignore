@@ -14,6 +14,24 @@ Release/
 *.lib
 *.exe
 
+# 编译产物（跨平台）
+*.d
+*.o
+*.slo
+*.lo
+*.a
+*.la
+*.lai
+*.so
+*.dylib
+*.dll
+*.gch
+*.pch
+*.mod
+*.smod
+*.out
+*.app
+
 # IDE / 工具缓存
 .screenshots/
 .trae-html-share-packages/
