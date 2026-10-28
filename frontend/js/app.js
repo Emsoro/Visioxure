@@ -74,6 +74,7 @@ window.addEventListener("error", (e) => {
 document.addEventListener("DOMContentLoaded", () => {
   VX.Model.init();
   VX.Editor.init();
+  if (VX.StylePanel) VX.StylePanel.init();
   if (VX.Inspect) VX.Inspect.init();
   VX.FileIO.init();
   initPanelTabs();

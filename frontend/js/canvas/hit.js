@@ -136,23 +136,42 @@
       return null;
     },
 
-    // connector 工具：命中形状并返回最近连接点序号（0..3），未命中返回 null
-    shapeAndAnchor(wx, wy) {
+    // 连接点吸附容差（屏幕像素 → 世界坐标）
+    anchorTolerance(tolPx) { return (tolPx || 10) / (VX.state.zoom || 1); },
+
+    // connector 工具 / 端点拖拽：命中形状并返回最近连接点序号（0..3），未命中返回 null
+    // 1) 连接点吸附优先（形状外侧也可命中）；2) 落在形状内则取最近边中点
+    // tolPx：贴近形状连接点的吸附半径（屏幕像素），端点拖拽可调大以“接近即吸附”
+    // anchorsOnly：true 时只吸附到连接点（端点拖拽），不按“形状内部就近边中点”回退
+    shapeAndAnchor(wx, wy, tolPx, anchorsOnly) {
       const shapes = VX.Model.shapes();
+      const tol = this.anchorTolerance(tolPx);
+      let best = null;
       for (let i = shapes.length - 1; i >= 0; i--) {
         const s = shapes[i];
         if (s.type === "connector" || s.type === "group") continue;
         if (!selectable(s)) continue;
-        if (inAABB(s, wx, wy)) {
-          // 就近四边中点
-          const cands = [];
-          for (let n = 0; n < 4; n++) {
-            const a = VX.Routing.anchorOf(s, n);
-            cands.push({ n, d: Math.hypot(wx - a.x, wy - a.y) });
-          }
-          cands.sort((p, q) => p.d - q.d);
-          return { shape: s, anchor: cands[0].n };
+        for (let n = 0; n < 4; n++) {
+          const a = VX.Routing.anchorOf(s, n);
+          const d = Math.hypot(wx - a.x, wy - a.y);
+          if (d <= tol && (!best || d < best.d)) best = { shape: s, anchor: n, d };
         }
+      }
+      if (best) return { shape: best.shape, anchor: best.anchor };
+      if (anchorsOnly) return null;
+
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const s = shapes[i];
+        if (s.type === "connector" || s.type === "group") continue;
+        if (!selectable(s)) continue;
+        if (!inAABB(s, wx, wy)) continue;
+        const cands = [];
+        for (let n = 0; n < 4; n++) {
+          const a = VX.Routing.anchorOf(s, n);
+          cands.push({ n, d: Math.hypot(wx - a.x, wy - a.y) });
+        }
+        cands.sort((p, q) => p.d - q.d);
+        return { shape: s, anchor: cands[0].n };
       }
       return null;
     },

@@ -1,11 +1,27 @@
 // stencils.js —— 形状库（P2）
-// 分类定义 + 缩略图绘制；点击形状项在页面中心创建
+// 分类：基本形状 / 流程图 / 交互原型；点击条目在当前视口中心创建
 // path 子路径为局部坐标（原点=形状中心），与 renderer/hit/geometry 约定一致
+// 组合条目的 children 使用「左上角 = 0,0」的局部坐标，插入时整体平移
 "use strict";
 
 (function () {
   function polyDef(pts, w, h) {
     return { type: "path", w, h, path: { subpaths: [pts], fillRule: "evenodd" } };
+  }
+
+  // ---------- 交互原型：组合构件的局部坐标小工具 ----------
+  const FONT = { family: "Segoe UI", size: 13, color: "#333333", bold: false, align: "center", vAlign: "middle" };
+  function font(patch) { return Object.assign({}, FONT, patch || {}); }
+  function box(x, y, w, h, style) { return { type: "rect", x, y, w, h, style }; }
+  function ellipse(x, y, w, h, style) { return { type: "ellipse", x, y, w, h, style }; }
+  function poly(pts, x, y, w, h, style) {
+    return { type: "path", x, y, w, h, path: { subpaths: [pts], fillRule: "evenodd" }, style };
+  }
+  function label(text, x, y, w, h, fontPatch) {
+    return {
+      type: "text", x, y, w, h, text,
+      style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font(Object.assign({ align: "left" }, fontPatch || {})) },
+    };
   }
 
   const categories = [
@@ -14,49 +30,185 @@
       items: [
         { id: "rect", name: "矩形", def: { type: "rect", w: 120, h: 80 } },
         { id: "roundrect", name: "圆角矩形", def: { type: "rect", w: 120, h: 80, style: { cornerRadius: 12 } } },
-        { id: "ellipse", name: "椭圆", def: { type: "ellipse", w: 120, h: 90 } },
-        { id: "circle", name: "圆形", def: { type: "ellipse", w: 90, h: 90 } },
-        { id: "diamond", name: "菱形", def: polyDef([{ x: -60, y: 0 }, { x: 0, y: -45 }, { x: 60, y: 0 }, { x: 0, y: 45 }], 120, 90) },
+        { id: "circle", name: "圆形", def: { type: "ellipse", w: 100, h: 100 } },
         { id: "triangle", name: "三角形", def: polyDef([{ x: -60, y: 45 }, { x: 0, y: -45 }, { x: 60, y: 45 }], 120, 90) },
-        { id: "parallelogram", name: "平行四边形", def: polyDef([{ x: -50, y: -35 }, { x: 60, y: -35 }, { x: 50, y: 35 }, { x: -60, y: 35 }], 120, 70) },
         { id: "trapezoid", name: "梯形", def: polyDef([{ x: -45, y: -35 }, { x: 45, y: -35 }, { x: 60, y: 35 }, { x: -60, y: 35 }], 120, 70) },
-        { id: "arrowright", name: "右箭头", def: polyDef([{ x: -60, y: -15 }, { x: 10, y: -15 }, { x: 10, y: -35 }, { x: 60, y: 0 }, { x: 10, y: 35 }, { x: 10, y: 15 }, { x: -60, y: 15 }], 120, 70) },
-        { id: "hexagon", name: "六边形", def: polyDef([{ x: -30, y: -45 }, { x: 30, y: -45 }, { x: 60, y: 0 }, { x: 30, y: 45 }, { x: -30, y: 45 }, { x: -60, y: 0 }], 120, 90) },
       ],
     },
     {
       name: "流程图",
       items: [
-        { id: "fl-process", name: "过程", def: { type: "rect", w: 140, h: 60 } },
-        { id: "fl-decision", name: "判定", def: polyDef([{ x: -70, y: 0 }, { x: 0, y: -40 }, { x: 70, y: 0 }, { x: 0, y: 40 }], 140, 80) },
-        { id: "fl-terminator", name: "开始/结束", def: { type: "rect", w: 120, h: 50, style: { cornerRadius: 25 } } },
-        { id: "fl-data", name: "数据", def: polyDef([{ x: -60, y: -30 }, { x: 70, y: -30 }, { x: 60, y: 30 }, { x: -70, y: 30 }], 140, 60) },
-        { id: "fl-prep", name: "准备", def: polyDef([{ x: -70, y: -30 }, { x: 70, y: -30 }, { x: 60, y: 30 }, { x: -60, y: 30 }].map((p) => ({ x: p.x * 0.9, y: p.y })), 140, 60) },
-        { id: "fl-connector", name: "连接符", def: { type: "ellipse", w: 60, h: 60 } },
-        { id: "fl-document", name: "文档", def: polyDef([{ x: -70, y: -30 }, { x: 70, y: -30 }, { x: 70, y: 20 }, { x: 50, y: 32 }, { x: 30, y: 22 }, { x: 10, y: 34 }, { x: -10, y: 24 }, { x: -30, y: 36 }, { x: -50, y: 26 }, { x: -70, y: 34 }], 140, 70) },
-        { id: "fl-database", name: "数据库", def: polyDef([{ x: -60, y: -30 }, { x: 60, y: -30 }, { x: 60, y: 25 }, { x: 45, y: 38 }, { x: -45, y: 38 }, { x: -60, y: 25 }, { x: -60, y: -30 }], 120, 70) },
+        // 连接线：带箭头的正交折线（两端可在画布上拖动吸附到形状连接点）
+        {
+          id: "flow-connector", name: "连接线",
+          def: { type: "connector", w: 160, h: 0, begin: { x: 0, y: 0 }, end: { x: 160, y: 0 }, route: "ortho" },
+        },
+        // 箭头：块状箭头（可缩放，常用于流程指向）
+        {
+          id: "flow-arrow", name: "箭头",
+          def: polyDef([{ x: -60, y: -10 }, { x: 10, y: -10 }, { x: 10, y: -25 },
+            { x: 60, y: 0 }, { x: 10, y: 25 }, { x: 10, y: 10 }, { x: -60, y: 10 }], 120, 50),
+        },
       ],
     },
     {
-      name: "Axure",
+      name: "交互原型",
       items: [
-        { id: "panel", name: "动态面板",
-          def: { type: "panel", w: 240, h: 160, panel: { states: [{ id: "st1", name: "状态 1", shapes: [] }] } } },
+        {
+          id: "proto-button", name: "按钮",
+          def: {
+            type: "rect", w: 100, h: 32, text: "按钮",
+            style: { cornerRadius: 6, fill: "#F2F2F2", line: "#7F7F7F", lineWidth: 1, font: font() },
+          },
+        },
+        {
+          id: "proto-textlabel", name: "文本标签",
+          def: {
+            type: "text", w: 120, h: 24, text: "文本标签",
+            style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font({ align: "left" }) },
+          },
+        },
+        {
+          id: "proto-textbox", name: "文本框",
+          def: {
+            type: "rect", w: 160, h: 32, text: "请输入…",
+            style: { cornerRadius: 3, fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, font: font({ align: "left", color: "#9E9E9E" }) },
+          },
+        },
+        {
+          id: "proto-select", name: "下拉列表",
+          def: {
+            type: "group", w: 160, h: 32,
+            children: [
+              box(0, 0, 160, 32, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, cornerRadius: 3 }),
+              label("请选择", 8, 0, 110, 32),
+              poly([{ x: -7, y: -4 }, { x: 7, y: -4 }, { x: 0, y: 4 }], 136, 12, 14, 8,
+                { fill: "#7F7F7F", line: "transparent", lineWidth: 0 }),
+            ],
+          },
+        },
+        {
+          id: "proto-checkbox", name: "复选框",
+          def: {
+            type: "group", w: 140, h: 24,
+            children: [
+              box(0, 4, 16, 16, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1, cornerRadius: 2 }),
+              label("复选框", 24, 0, 116, 24),
+            ],
+          },
+        },
+        {
+          id: "proto-radio", name: "单选按钮",
+          def: {
+            type: "group", w: 140, h: 24,
+            children: [
+              ellipse(0, 4, 16, 16, { fill: "#FFFFFF", line: "#7F7F7F", lineWidth: 1 }),
+              label("单选按钮", 24, 0, 116, 24),
+            ],
+          },
+        },
+        {
+          id: "proto-image", name: "图片占位",
+          def: {
+            type: "group", w: 120, h: 90,
+            children: [
+              box(0, 0, 120, 90, { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1 }),
+              ellipse(76, 14, 14, 14, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+              poly([{ x: -30, y: 17 }, { x: 0, y: -17 }, { x: 30, y: 17 }], 28, 42, 60, 34,
+                { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+            ],
+          },
+        },
+        {
+          id: "proto-avatar", name: "人像占位",
+          def: {
+            type: "group", w: 90, h: 110,
+            children: [
+              box(0, 0, 90, 110, { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1 }),
+              ellipse(32, 18, 26, 26, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+              poly([{ x: -29, y: 19 }, { x: -19, y: -6 }, { x: 0, y: -15 }, { x: 19, y: -6 }, { x: 29, y: 19 }],
+                16, 56, 58, 38, { fill: "#BFBFBF", line: "transparent", lineWidth: 0 }),
+            ],
+          },
+        },
+        {
+          id: "proto-placeholder", name: "通用占位",
+          def: {
+            type: "rect", w: 120, h: 90, text: "占位符",
+            style: { fill: "#F2F2F2", line: "#BFBFBF", lineWidth: 1, font: font({ color: "#9E9E9E" }) },
+          },
+        },
+        {
+          id: "proto-panel", name: "动态面板",
+          def: { type: "panel", w: 240, h: 160, panel: { states: [{ id: "st1", name: "状态 1", shapes: [] }] } },
+        },
+        {
+          id: "proto-repeater", name: "中继器",
+          def: {
+            type: "rect", w: 200, h: 120, text: "中继器",
+            style: { cornerRadius: 2, fill: "#F7F7F7", line: "#A6A6A6", lineWidth: 1, font: font({ color: "#7F7F7F" }) },
+          },
+        },
+        {
+          id: "proto-hotspot", name: "热区",
+          def: {
+            type: "rect", w: 160, h: 90, text: "热区",
+            style: { cornerRadius: 2, fill: "#FFF2CC", line: "#BF9000", lineWidth: 1, font: font({ color: "#BF9000" }) },
+          },
+        },
       ],
     },
   ];
 
+  // ---------- 创建：深拷贝模板 + 补齐默认字段 ----------
+  function offsetChildren(list, dx, dy) {
+    for (const s of list || []) {
+      s.x += dx; s.y += dy;
+      if (s.type === "group") offsetChildren(s.children, dx, dy);
+    }
+  }
+
+  function assignIds(list) {
+    for (const s of list || []) {
+      s.id = VX.Model.nextId();
+      if (s.type === "group") assignIds(s.children);
+    }
+  }
+
+  // 条目实际样式：默认「无填充 + 黑边」，条目 def.style 覆盖；
+  // 无填充时字色落成深色（否则默认白字在白纸上不可见）
+  function stencilStyle(def) {
+    const base = VX.Model.defaultStyleFor ? VX.Model.defaultStyleFor(def.type) : {};
+    const defStyle = def.style || {};
+    const out = Object.assign(base, { fill: "transparent", line: "#000000", lineWidth: 1.5 }, defStyle);
+    if (!defStyle.font && out.fill === "transparent") {
+      out.font = Object.assign({}, base.font || {}, { color: "#333333" });
+    }
+    return out;
+  }
+
   // item.def 是共享模板——创建时深拷贝并补默认字段
-  // 形状库图形统一：黑色边框 + 无填充
+  // 默认样式：黑色边框 + 无填充；条目 def.style 可覆盖（原型控件的浅底/灰字等）
   function makeShapeProps(item, x, y) {
     const props = JSON.parse(JSON.stringify(item.def));
     props.x = x; props.y = y;
-    const base = VX.Model.defaultStyleFor ? VX.Model.defaultStyleFor(props.type) : {};
-    props.style = Object.assign(base, props.style || {}, { fill: "transparent", line: "#000000", lineWidth: 1.5 });
+    props.style = stencilStyle(props);
+
+    if (props.type === "connector") {
+      const b = props.begin || { x: 0, y: 0 };
+      const e = props.end || { x: props.w || 160, y: 0 };
+      props.begin = { x: x + b.x, y: y + b.y };
+      props.end = { x: x + e.x, y: y + e.y };
+      props.route = props.route || "ortho";
+    }
+    if (props.children) {
+      offsetChildren(props.children, x, y);
+      assignIds(props.children);
+    }
     return props;
   }
 
-  // 左面板渲染：分类折叠 + 缩略图
+  // 左面板渲染：分类标题 + 缩略图网格
   function renderPanel(rootEl) {
     rootEl.innerHTML = "";
     for (const cat of categories) {
@@ -73,12 +225,17 @@
         cell.title = item.name;
         const cv = document.createElement("canvas");
         cv.width = 72; cv.height = 48;
-        drawThumb(cv, item.def);
-        const label = document.createElement("div");
-        label.className = "stencil-name";
-        label.textContent = item.name;
+        // 单条缩略图出错不能拖垮整个面板（否则后面的条目会整批消失）
+        try {
+          drawThumb(cv, item.def);
+        } catch (e) {
+          console.warn("stencil thumb failed:", item.id, e);
+        }
+        const labelEl = document.createElement("div");
+        labelEl.className = "stencil-name";
+        labelEl.textContent = item.name;
         cell.appendChild(cv);
-        cell.appendChild(label);
+        cell.appendChild(labelEl);
         cell.addEventListener("click", () => {
           // 在当前视口中心创建（网格吸附）
           const c = document.getElementById("canvas");
@@ -102,38 +259,118 @@
     }
   }
 
-  // 缩略图：按包围盒等比缩放绘制（黑色边框、无填充，与插入后的样式一致）
+  // ---------- 缩略图：按包围盒等比缩放，与插入后的样式一致 ----------
   function drawThumb(cv, def) {
     const c = cv.getContext("2d");
-    const st = def.style || {};
     const pad = 6;
-    const k = Math.min((cv.width - pad * 2) / def.w, (cv.height - pad * 2) / def.h);
-    const ox = (cv.width - def.w * k) / 2, oy = (cv.height - def.h * k) / 2;
+    const w = Math.max(def.w || 1, 1), h = Math.max(def.h || 1, 1);
+    const k = Math.min((cv.width - pad * 2) / w, (cv.height - pad * 2) / h);
+    const ox = (cv.width - w * k) / 2, oy = (cv.height - h * k) / 2;
     c.save();
     c.translate(ox, oy);
     c.scale(k, k);
+    drawThumbNode(c, def, k);
+    c.restore();
+  }
+
+  // 节点绘制：坐标为条目局部坐标（左上角 = 0,0）
+  // 圆角矩形：老版本 WebView2 没有 ctx.roundRect，退化为手写路径
+  function thumbRoundRect(c, x, y, w, h, r) {
+    if (typeof c.roundRect === "function") { c.roundRect(x, y, w, h, r || 0); return; }
+    const rad = Math.max(0, Math.min(r || 0, Math.abs(w) / 2, Math.abs(h) / 2));
+    c.moveTo(x + rad, y);
+    c.lineTo(x + w - rad, y);
+    c.arcTo(x + w, y, x + w, y + rad, rad);
+    c.lineTo(x + w, y + h - rad);
+    c.arcTo(x + w, y + h, x + w - rad, y + h, rad);
+    c.lineTo(x + rad, y + h);
+    c.arcTo(x, y + h, x, y + h - rad, rad);
+    c.lineTo(x, y + rad);
+    c.arcTo(x, y, x + rad, y, rad);
+    c.closePath();
+  }
+
+  function drawThumbNode(c, s, k) {
+    // 缩略图与插入后的效果一致：模板没写 style 的条目也用上默认黑色边框
+    const st = Object.assign(stencilStyle(s), s.style || {});
+    if (s.type === "group") {
+      for (const ch of s.children || []) drawThumbNode(c, ch, k);
+      return;
+    }
+    if (s.type === "connector") {
+      const y = (s.h || 0) / 2;
+      const x1 = 4, x2 = Math.max((s.w || 120) - 4, x1 + 4);
+      c.strokeStyle = "#000000";
+      c.lineWidth = 1.5 / k;
+      c.beginPath();
+      c.moveTo(x1, y); c.lineTo(x2, y);
+      c.stroke();
+      const ah = 10;
+      c.beginPath();
+      c.moveTo(x2, y);
+      c.lineTo(x2 - ah, y - ah * 0.55);
+      c.lineTo(x2 - ah, y + ah * 0.55);
+      c.closePath();
+      c.fillStyle = "#000000";
+      c.fill();
+      return;
+    }
+    if (s.type === "text") {
+      drawThumbText(c, s, k, st, "left");
+      return;
+    }
+
+    // rect / ellipse / path / panel
+    const sx = s.x || 0, sy = s.y || 0;
+    const cx = sx + (s.w || 0) / 2, cy = sy + (s.h || 0) / 2;
+    c.save();
+    c.translate(cx, cy);
     c.beginPath();
-    if (def.type === "ellipse") {
-      c.ellipse(def.w / 2, def.h / 2, def.w / 2, def.h / 2, 0, 0, Math.PI * 2);
-    } else if (def.type === "rect") {
-      const r = Math.min(st.cornerRadius || 0, def.w / 2, def.h / 2);
-      c.roundRect(0, 0, def.w, def.h, r);
-    } else if (def.type === "panel") {
-      c.rect(0, 0, def.w, def.h);
-    } else if (def.type === "path") {
-      for (const ring of def.path.subpaths) {
-        ring.forEach((p, i) => {
-          const px = p.x + def.w / 2, py = p.y + def.h / 2;
-          if (i) c.lineTo(px, py); else c.moveTo(px, py);
-        });
+    if (s.type === "ellipse") {
+      c.ellipse(0, 0, (s.w || 1) / 2, (s.h || 1) / 2, 0, 0, Math.PI * 2);
+    } else if (s.type === "path") {
+      for (const ring of (s.path && s.path.subpaths) || []) {
+        ring.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); });
         c.closePath();
       }
+    } else {
+      const r = Math.min(st.cornerRadius || 0, (s.w || 0) / 2, (s.h || 0) / 2);
+      thumbRoundRect(c, -(s.w || 0) / 2, -(s.h || 0) / 2, s.w || 1, s.h || 1, r);
     }
-    c.strokeStyle = "#000000";
-    if (def.type === "panel") c.setLineDash([4, 3]);
-    c.lineWidth = 1.5 / k;
-    c.stroke();
-    c.setLineDash([]);
+    const hasFill = st.fill && st.fill !== "transparent";
+    const hasLine = st.line && st.line !== "transparent" && (st.lineWidth == null || st.lineWidth > 0);
+    if (hasFill) {
+      c.fillStyle = st.fill;
+      c.fill(s.type === "path" && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd");
+    }
+    if (hasLine) {
+      c.strokeStyle = st.line;
+      c.lineWidth = Math.max(st.lineWidth || 1, 0.5) / k;
+      c.stroke();
+    } else if (s.type === "panel") {
+      c.strokeStyle = "#9AA0A8";
+      c.lineWidth = 1 / k;
+      c.setLineDash([4 / k, 3 / k]);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    c.restore();
+
+    if (s.text) drawThumbText(c, s, k, st, st.font && st.font.align === "left" ? "left" : "center");
+  }
+
+  function drawThumbText(c, s, k, st, align) {
+    const f = st.font || {};
+    const size = f.size || 13;
+    if (size * k < 5) return; // 太小，省略文字避免糊成一团
+    const sx = s.x || 0, sy = s.y || 0;
+    c.save();
+    c.fillStyle = f.color || "#333333";
+    c.font = `${f.bold ? "bold " : ""}${size}px 'Segoe UI'`;
+    c.textAlign = align === "center" ? "center" : "left";
+    c.textBaseline = "middle";
+    const tx = align === "center" ? sx + (s.w || 0) / 2 : sx + 3;
+    c.fillText(s.text || "", tx, sy + (s.h || 0) / 2, Math.max((s.w || 0) - 6, 10));
     c.restore();
   }
 

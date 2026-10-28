@@ -2,6 +2,7 @@
 #include "vsdx/package.hpp"
 #include "vsdx/reader.hpp"
 #include "vsdx/writer.hpp"
+#include "vsdx/xml.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -23,6 +24,7 @@ void Check(bool cond, const std::string& what) {
         std::printf("  [FAIL] %s\n", what.c_str());
         ++failures;
     }
+    std::fflush(stdout);  // 崩溃时保留已输出的诊断
 }
 
 void CheckNear(double a, double b, double tol, const std::string& what) {
@@ -137,6 +139,247 @@ json MakeDoc() {
                 {"version", 1},
                 {"doc", {{"theme", "light"}, {"variables", json::array()}}},
                 {"pages", json::array({page})}};
+}
+
+// 基础场景：多页面 / 空页面 / 字段缺省 / 透明填充与边线 / XML 特殊字符 / 图层状态 / 变量 / 交互面板
+json MakeBasicDoc() {
+    auto style = [](const char* fill, const char* line) {
+        return json{{"fill", fill}, {"line", line}, {"lineWidth", 1.0}, {"cornerRadius", 0}, {"opacity", 1.0},
+                    {"font", {{"family", "Segoe UI"}, {"size", 14}, {"color", "#333333"}, {"bold", false},
+                              {"align", "center"}, {"vAlign", "middle"}}}};
+    };
+
+    // 页面 1：两个最小字段形状（无 style / 无 text），验证缺省值往返
+    json p1 = {
+        {"id", "p1"}, {"name", "A&B <1> 页"},
+        {"size", {{"mode", "fixed"}, {"w", 600}, {"h", 400}, {"orientation", "landscape"}}},
+        {"guides", json::array()},
+        {"variables", json::array({{{"name", "用户名"}, {"value", "张&三"}, {"scope", "page"}}})},
+        {"layers", json::array()},
+        {"shapes", json::array()},
+    };
+    p1["shapes"].push_back(json{{"id", "m1"}, {"type", "rect"}, {"x", 10}, {"y", 20}, {"w", 50}, {"h", 40}});
+    p1["shapes"].push_back(json{{"id", "m2"}, {"type", "ellipse"}, {"x", 200}, {"y", 100}, {"w", 60},
+                                 {"h", 60}, {"text", "&quot;&lt;特殊&gt;&amp;字符\"'"}});
+
+    // 页面 2：完全空白页
+    json p2 = {
+        {"id", "p2"}, {"name", "空页"},
+        {"size", {{"mode", "fixed"}, {"w", 400}, {"h", 300}, {"orientation", "landscape"}}},
+        {"guides", json::array()},
+        {"variables", json::array()},
+        {"layers", json::array()},
+        {"shapes", json::array()},
+    };
+
+    // 页面 3：透明填充/边线、隐藏/锁定图层、全局变量、动态面板、交互、connector 无箭头
+    json p3 = {
+        {"id", "p3"}, {"name", "样式页"},
+        {"size", {{"mode", "fixed"}, {"w", 1100}, {"h", 800}, {"orientation", "portrait"}}},
+        {"guides", json::array()},
+        {"variables", json::array()},
+        {"layers", json::array({
+            {{"id", "l1"}, {"name", "底"}, {"visible", true}, {"locked", false}},
+            {{"id", "l2"}, {"name", "隐"}, {"visible", false}, {"locked", true}},
+        })},
+        {"shapes", json::array()},
+    };
+    p3["shapes"].push_back(json{{"id", "b1"}, {"type", "rect"}, {"x", 30}, {"y", 40}, {"w", 90},
+                                 {"h", 50}, {"layer", "l2"},
+                                 {"style", style("transparent", "#FF0000")}, {"text", "透明填充"}});
+    p3["shapes"].push_back(json{{"id", "b2"}, {"type", "ellipse"}, {"x", 200}, {"y", 60}, {"w", 70},
+                                 {"h", 70}, {"layer", "l1"},
+                                 {"style", style("#00FF00", "transparent")}});
+    json noArrowConnector = {{"id", "b3"},
+                             {"type", "connector"},
+                             {"x", 0},
+                             {"y", 0},
+                             {"w", 10},
+                             {"h", 10},
+                             {"layer", "l1"},
+                             {"style", {{"line", "#37474F"}, {"lineWidth", 1.5}, {"arrowEnd", false},
+                                        {"arrowBegin", false}, {"opacity", 1.0}}},
+                             {"begin", {{"x", 100}, {"y", 100}}},
+                             {"end", {{"x", 300}, {"y", 220}}},
+                             {"route", "straight"}};
+    p3["shapes"].push_back(noArrowConnector);
+    json panelShape = {{"id", "b4"},
+                       {"type", "panel"},
+                       {"x", 400},
+                       {"y", 300},
+                       {"w", 120},
+                       {"h", 80},
+                       {"layer", "l1"},
+                       {"style", style("#FFFFFF", "#999999")},
+                       {"panel", {{"action", "toggle"}, {"targets", json::array({"b1"})}}},
+                       {"interactions", json::array({{{"event", "onClick"}, {"action", "show"},
+                                                      {"target", "b2"}}})}};
+    p3["shapes"].push_back(panelShape);
+
+    return json{{"format", "visioxure"},
+                {"version", 1},
+                {"doc", {{"theme", "dark"},
+                         {"variables", json::array({{{"name", "全局"}, {"value", "1"}, {"scope", "global"}}})}}},
+                {"pages", json::array({p1, p2, p3})}};
+}
+
+void RunBasicScenarios() {
+    std::printf("4) 基础场景（多页面/空页/缺省字段/透明/特殊字符/图层/变量/面板）\n");
+    std::string err;
+    const json basic = MakeBasicDoc();
+    std::string bytes = vsx::BuildVsdxBytes(basic, err);
+    Check(!bytes.empty(), "基础场景写入成功" + (bytes.empty() ? (": " + err) : std::string()));
+    if (bytes.empty()) return;
+    {
+        std::ofstream o("build_basic.vsdx", std::ios::binary | std::ios::trunc);
+        if (o) o.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    json parsed;
+    std::vector<std::string> warnings;
+    Check(vsx::ParseVsdxBytes(bytes, parsed, warnings, err), "基础场景读回成功" + err);
+    if (parsed["pages"].size() != 3) {
+        Check(false, "页面数 = 3");
+        return;
+    }
+    Check(parsed["pages"].size() == 3, "页面数 = 3");
+    Check(parsed["pages"][0].value("name", "") == "A&B <1> 页", "页面名特殊字符往返");
+    CheckNear(parsed["pages"][1]["size"].value("w", 0.0), 400, 0.5, "空页宽度 = 400");
+    Check(parsed["pages"][1]["shapes"].empty(), "空页无形状");
+    Check(parsed["pages"][2].value("name", "") == "样式页", "第三页名称保留");
+
+    const json& s1 = parsed["pages"][0]["shapes"];
+    {
+        vsx::Package dbg;
+        std::string de;
+        if (vsx::Package::LoadFromBytes(bytes, dbg, de)) {
+            std::string px = dbg.FindOr("visio/pages/page1.xml");
+            std::printf("DEBUG page1.xml head: %.900s\n", px.c_str());
+        }
+    }
+    std::printf("DEBUG p1 shapes: %s\n", s1.dump(2).c_str());
+    std::printf("DEBUG p3 shapes: %s\n", parsed["pages"][2]["shapes"].dump(2).c_str());
+    json m1 = FindShape(s1, "m1");
+    Check(!m1.is_null() && m1.value("type", "") == "rect", "m1 缺省 style 读回为 rect");
+    if (!m1.is_null()) {
+        CheckNear(m1.value("x", 0.0), 10, 0.5, "m1 x 往返");
+        CheckNear(m1.value("y", 0.0), 20, 0.5, "m1 y 往返");
+        CheckNear(m1.value("w", 0.0), 50, 0.5, "m1 w 往返");
+        CheckNear(m1.value("h", 0.0), 40, 0.5, "m1 h 往返");
+        Check(m1["style"].value("fill", "") == "#FFFFFF", "m1 缺省填充 = #FFFFFF");
+        Check(m1["style"].value("line", "") == "#000000", "m1 缺省边线 = #000000");
+    }
+    json m2 = FindShape(s1, "m2");
+    Check(!m2.is_null() && m2.value("text", "") == "&quot;&lt;特殊&gt;&amp;字符\"'", "m2 文本实体往返");
+
+    Check(parsed["pages"][0]["variables"].size() == 1, "页面变量数量一致");
+    if (parsed["pages"][0]["variables"].size() == 1)
+        Check(parsed["pages"][0]["variables"][0].value("value", "") == "张&三", "页面变量值往返");
+    Check(parsed["doc"]["variables"].size() == 1, "全局变量数量一致");
+    if (parsed["doc"]["variables"].size() == 1)
+        Check(parsed["doc"]["variables"][0].value("name", "") == "全局", "全局变量名往返");
+
+    const auto& layers = parsed["pages"][2]["layers"];
+    Check(layers.size() == 2, "第三页图层数 = 2");
+    if (layers.size() == 2) {
+        Check(layers[1].value("visible", true) == false, "隐藏图层保留");
+        Check(layers[1].value("locked", false) == true, "锁定图层保留");
+    }
+
+    const json& s3 = parsed["pages"][2]["shapes"];
+    json b1 = FindShape(s3, "b1");
+    Check(!b1.is_null() && b1["style"].value("fill", "") == "transparent", "b1 透明填充往返");
+    if (!b1.is_null()) Check(b1.value("layer", "") == "l2", "b1 图层归属保留");
+    json b2 = FindShape(s3, "b2");
+    Check(!b2.is_null() && b2["style"].value("line", "") == "transparent", "b2 透明边线往返");
+    json b3 = FindShape(s3, "b3");
+    Check(!b3.is_null() && b3.value("route", "") == "straight", "b3 直连布线往返");
+    if (!b3.is_null()) {
+        Check(b3["style"].value("arrowEnd", true) == false, "b3 无末端箭头往返");
+        CheckNear(b3["begin"].value("x", 0.0), 100, 0.5, "b3 起点 x 往返");
+        CheckNear(b3["end"].value("y", 0.0), 220, 0.5, "b3 终点 y 往返");
+    }
+    json b4 = FindShape(s3, "b4");
+    Check(!b4.is_null() && b4.value("type", "") == "panel", "b4 动态面板类型往返");
+    if (!b4.is_null()) {
+        Check(b4.contains("panel") && b4["panel"].value("action", "") == "toggle", "b4 面板配置往返");
+        Check(b4.value("interactions", json::array()).size() == 1, "b4 交互事件往返");
+    }
+
+    // 二次往返稳定性
+    std::string bytes2 = vsx::BuildVsdxBytes(parsed, err);
+    json parsed3;
+    std::vector<std::string> warn3;
+    Check(!bytes2.empty() && vsx::ParseVsdxBytes(bytes2, parsed3, warn3, err), "基础场景二次往返成功");
+    if (!parsed3.is_null() && parsed3["pages"].size() == 3) {
+        Check(parsed3["pages"][0]["name"] == "A&B <1> 页", "二次往返页面名稳定");
+        Check(FindShape(parsed3["pages"][0]["shapes"], "m2").value("text", "") ==
+                  "&quot;&lt;特殊&gt;&amp;字符\"'",
+              "二次往返文本实体稳定");
+        Check(FindShape(parsed3["pages"][2]["shapes"], "b1")["style"].value("fill", "") == "transparent",
+              "二次往返透明填充稳定");
+    }
+
+    // 错误输入回归
+    std::printf("5) 错误输入回归\n");
+    {
+        json bad = {{"format", "visioxure"}, {"version", 1}, {"pages", json::array()}};
+        Check(vsx::BuildVsdxBytes(bad, err).empty() && !err.empty(), "空 pages 文档写入报错");
+    }
+    {
+        json parsedX;  // 复用空对象防止未声明
+        std::vector<std::string> wx;
+        std::string ex;
+        Check(!vsx::ParseVsdxBytes(std::string(), parsedX, wx, ex) && !ex.empty(), "空字节解析报错");
+        Check(!vsx::ParseVsdxBytes("not a zip at all", parsedX, wx, ex) && !ex.empty(), "非 zip 字节解析报错");
+    }
+    {
+        vsx::Package pkg;
+        std::string pe;
+        Check(!vsx::Package::LoadFromBytes("PK\x03\x04garbagegarbage", pkg, pe), "损坏 zip 不崩溃并报错");
+    }
+
+    // Package API 基础行为
+    std::printf("6) Package API\n");
+    {
+        vsx::Package pkg;
+        pkg.Add("visio/x.xml", "<A/>");
+        pkg.Add("/visio//y.xml", "<B/>");
+        Check(pkg.Has("visio/x.xml"), "Add/Has 路径规范化");
+        Check(pkg.FindOr("visio/x.xml") == "<A/>", "FindOr 返回内容");
+        Check(pkg.FindOr("missing.xml", "dflt") == "dflt", "FindOr 缺省值");
+        Check(vsx::Package::ResolveTarget("visio/pages/pages.xml", "page1.xml") == "visio/pages/page1.xml",
+              "ResolveTarget 相对路径");
+        Check(vsx::Package::ResolveTarget("visio/pages/pages.xml", "../masters/masters.xml") ==
+                  "visio/masters/masters.xml",
+              "ResolveTarget 处理 ..");
+        Check(vsx::Package::ResolveTarget("", "/visio/document.xml") == "visio/document.xml",
+              "ResolveTarget 绝对路径");
+    }
+
+    // XML 工具基础行为
+    std::printf("7) XML 工具\n");
+    {
+        Check(vsx::XmlEscape("<&>\"'abc") == "&lt;&amp;&gt;&quot;&apos;abc", "XmlEscape 五字符转义");
+        Check(vsx::XmlEscape("普通中文123") == "普通中文123", "XmlEscape 保留普通字符");
+    }
+    {
+        vsx::XmlNode root;
+        std::string xe;
+        Check(vsx::ParseXml("<?xml version=\"1.0\"?><!--c--><R a=\"1\" b=\"x&amp;y\">t&amp;u<R2/></R>", root, xe),
+              "ParseXml 混合语法成功");
+        if (root.tag == "R") {
+            Check(root.attr("a") == "1" && root.attr("b") == "x&y", "属性与实体解码");
+            Check(root.text == "t&u", "直接文本解码");
+            Check(root.child("R2") != nullptr, "子元素查找");
+            Check(root.attr("missing", "d") == "d", "缺失属性取缺省值");
+        } else {
+            Check(false, "根元素为 R");
+        }
+        vsx::XmlNode bad;
+        Check(!vsx::ParseXml("<A><B></A>", bad, xe), "标签不匹配报错");
+        Check(!vsx::ParseXml("", bad, xe), "空 XML 报错");
+    }
 }
 
 }  // namespace
@@ -304,6 +547,8 @@ int main(int argc, char** argv) {
         json cc = FindShape(parsed2["pages"][0]["shapes"], "s5");
         Check(!cc.is_null() && cc["glue"].value("begin", "") == "s1:1", "二次往返连接线粘附一致");
     }
+
+    RunBasicScenarios();
 
     if (!warnings.empty()) {
         std::printf("warnings (%zu):\n", warnings.size());

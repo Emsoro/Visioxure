@@ -30,6 +30,10 @@ window.VX = window.VX || {};
     enterGroup: null,   // 双击进入组合编辑时的组 id
     panelEdit: null,    // {panelId, stateId} 进入动态面板状态编辑
     rubberConn: null,   // 连接线拖拽预览 {begin:{x,y}, cur:{x,y}}（世界坐标，瞬态）
+    hoverShapeId: null, // 鼠标悬停的形状 id（用于显示连接点，瞬态）
+    hoverAnchor: null,  // 连接点吸附高亮 {id, index}（瞬态）
+    hoverConnEnd: null, // 连接线端点悬停 {id, which:'begin'|'end'}（瞬态）
+    connEndDrag: false, // 正在拖拽连接线端点（用于显示全部连接点）
   };
 
   const doc = {
@@ -63,7 +67,8 @@ window.VX = window.VX || {};
                font: { family: "Segoe UI", size: 14, color: "#FFFFFF", bold: false, align: "center", vAlign: "middle" } };
     }
     if (type === "connector") {
-      return { line: "#37474F", lineWidth: 1.5, arrowEnd: true, arrowBegin: false, opacity: 1,
+      return { line: "#37474F", lineWidth: 1.5, arrowEnd: true, arrowBegin: false,
+               arrowEndKind: "arrow", arrowBeginKind: "none", opacity: 1,
                font: { family: "Segoe UI", size: 12, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
     }
     if (type === "panel") {
@@ -199,7 +204,7 @@ window.VX = window.VX || {};
 
     addShape(type, props) {
       const s = Object.assign({
-        id: "s" + nextShapeId++,
+        id: this.nextId(),
         type,
         x: 0, y: 0, w: 120, h: 80, angle: 0,
         z: this.maxZ() + 1,
@@ -224,6 +229,9 @@ window.VX = window.VX || {};
       state.dirty = true;
       return s;
     },
+
+    // 形状 id 分配（形状库创建组合子形状时复用）
+    nextId() { return "s" + nextShapeId++; },
 
     updateShape(id, props) {
       const s = this.shape(id);
@@ -453,6 +461,10 @@ window.VX = window.VX || {};
       currentPageId = doc.pages[0] ? doc.pages[0].id : null;
       state.selection = [];
       state.selGuides = [];
+      state.hoverShapeId = null;
+      state.hoverAnchor = null;
+      state.hoverConnEnd = null;
+      state.connEndDrag = false;
       state.dirty = true;
       emit("pagechange");
       emit("change");

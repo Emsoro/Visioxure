@@ -20,21 +20,31 @@
     return VX.Geometry.rot(cx, cy, t.angle || 0, pts[n & 3].x, pts[n & 3].y);
   }
 
+  const finite = (v) => typeof v === "number" && Number.isFinite(v);
+
   // connector 端点坐标：锚定形状优先，否则用存储的自由点
+  // 全部校验有限值——一个 NaN 端点会让整条连接线（含箭头）画不出来，看起来像“消失了”
   function endpointOf(sh, which) {
     const glue = sh.glue && sh.glue[which];
-    if (glue) {
+    if (typeof glue === "string") {
       const idx = glue.indexOf(":");
-      const t = VX.Model.shape(glue.slice(0, idx));
-      if (t) return anchorOf(t, +glue.slice(idx + 1));
+      if (idx > 0) {
+        const t = VX.Model.shape(glue.slice(0, idx));
+        if (t && finite(t.x) && finite(t.y) && finite(t.w) && finite(t.h)) {
+          const a = anchorOf(t, +glue.slice(idx + 1));
+          if (finite(a.x) && finite(a.y)) return a;
+        }
+      }
     }
-    return sh[which]; // {x,y}
+    const p = sh[which]; // {x,y}
+    return p && finite(p.x) && finite(p.y) ? { x: p.x, y: p.y } : null;
   }
 
   function glueNormal(sh, which) {
     const glue = sh.glue && sh.glue[which];
-    if (!glue) return null;
+    if (typeof glue !== "string") return null;
     const idx = glue.indexOf(":");
+    if (idx <= 0) return null;
     const t = VX.Model.shape(glue.slice(0, idx));
     if (!t) return null;
     const n = +glue.slice(idx + 1) & 3;
@@ -44,8 +54,55 @@
     return { x: nv.x * cos - nv.y * sin, y: nv.x * sin + nv.y * cos };
   }
 
+  // 曲线：A→B 的三次贝塞尔控制点（锚定端沿出线法向拉出，自由端沿直线方向拉出）
+  function curveOf(sh) {
+    const A = endpointOf(sh, "begin");
+    const B = endpointOf(sh, "end");
+    if (!A || !B) return null;
+    const na = glueNormal(sh, "begin");
+    const nb = glueNormal(sh, "end");
+    const d = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+    // 双自由端：给一个轻微弧度，避免“选了曲线却还是一条直线”
+    if (!na && !nb) {
+      const ux = (B.x - A.x) / d, uy = (B.y - A.y) / d;
+      const bow = Math.min(d * 0.18, 80);
+      const px = -uy * bow, py = ux * bow;
+      return {
+        A, B,
+        c1: { x: A.x + ux * d * 0.25 + px, y: A.y + uy * d * 0.25 + py },
+        c2: { x: A.x + ux * d * 0.75 + px, y: A.y + uy * d * 0.75 + py },
+      };
+    }
+    const k = Math.max(30, Math.min(d * 0.5, 140));
+    const c1 = na
+      ? { x: A.x + na.x * k, y: A.y + na.y * k }
+      : { x: A.x + (B.x - A.x) * 0.4, y: A.y + (B.y - A.y) * 0.4 };
+    const c2 = nb
+      ? { x: B.x + nb.x * k, y: B.y + nb.y * k }
+      : { x: B.x - (B.x - A.x) * 0.4, y: B.y - (B.y - A.y) * 0.4 };
+    return { A, B, c1, c2 };
+  }
+
+  // 三次贝塞尔采样（命中/手柄/标签定位复用）
+  function sampleCurve(cv, n) {
+    const out = [];
+    const N = n || 24;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, u = 1 - t;
+      const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+      out.push({
+        x: a * cv.A.x + b * cv.c1.x + c * cv.c2.x + d * cv.B.x,
+        y: a * cv.A.y + b * cv.c1.y + c * cv.c2.y + d * cv.B.y,
+      });
+    }
+    return out;
+  }
+
   // 正交折线：a → b（a 已按其法向出线；na/nb 为出线法向，null=自由端）
+  // 注意：一端自由一端粘附时 na 可能为 null，必须补出等价法向——
+  // 直接读 na.x/na.y 会抛异常并中断整帧渲染，连接线“看起来消失”了
   function elbow(a, b, na, nb) {
+    if (!a || !b) return [];
     const pts = [];
     const midx = (a.x + b.x) / 2, midy = (a.y + b.y) / 2;
     const aH = na ? na.x !== 0 : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
@@ -55,6 +112,11 @@
       if (aH) { pts.push({ x: b.x, y: a.y }); }
       else { pts.push({ x: a.x, y: b.y }); }
       return pts;
+    }
+
+    // 自由端按主方向推定法向，后续分支可安全使用 na
+    if (!na) {
+      na = aH ? { x: b.x >= a.x ? 1 : -1, y: 0 } : { x: 0, y: b.y >= a.y ? 1 : -1 };
     }
 
     if (aH) {
@@ -91,18 +153,47 @@
     return pts;
   }
 
+  // 折线整理：去重、去“原路折返”、去非有限坐标
+  // 折返（A→B→A）会让两段线完全重叠、箭头停在中间，视觉上像连接线断了/没了
+  function tidy(pts) {
+    const out = [];
+    for (const p of pts || []) {
+      if (!p || !finite(p.x) || !finite(p.y)) continue;
+      const q = out[out.length - 1];
+      if (q && Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) continue;
+      out.push({ x: p.x, y: p.y });
+    }
+    for (let i = 0; i + 2 < out.length;) {
+      const a = out[i], b = out[i + 1], c2 = out[i + 2];
+      const abx = b.x - a.x, aby = b.y - a.y;
+      const bcx = c2.x - b.x, bcy = c2.y - b.y;
+      const cross = abx * bcy - aby * bcx;
+      const dot = abx * bcx + aby * bcy;
+      // 共线且反向 → 中间的 b 是折返点，直接去掉
+      if (Math.abs(cross) < 0.01 && dot < 0) { out.splice(i + 1, 1); if (i > 0) i--; }
+      else i++;
+    }
+    return out.length >= 2 ? out : null;
+  }
+
   // connector → 世界坐标折线点列（渲染/命中实时计算，移动形状自动跟随）
   function pointsOf(sh) {
     const A = endpointOf(sh, "begin");
     const B = endpointOf(sh, "end");
     if (!A || !B) return null;
 
+    // 曲线：返回采样折线，命中/端点/分段拖拽都与折线一致
+    if (sh.route === "curve") {
+      const cv = curveOf(sh);
+      return cv ? sampleCurve(cv, 24) : [A, B];
+    }
+
     // 手动编辑过的折线：保留用户拖出的中间点，端点仍跟随粘附
     if (sh.route === "manual" && Array.isArray(sh.points) && sh.points.length >= 2) {
       const pts = sh.points.map((p) => ({ x: p.x, y: p.y }));
       pts[0] = { x: A.x, y: A.y };
       pts[pts.length - 1] = { x: B.x, y: B.y };
-      return pts;
+      return tidy(pts) || [A, B];
     }
 
     if (sh.route === "straight") return [A, B];
@@ -117,13 +208,8 @@
     pts.push(...elbow(a, b, na, nb));
     if (nb) pts.push(b);
     pts.push(B);
-    // 去除相邻重复点
-    const out = [];
-    for (const p of pts) {
-      const q = out[out.length - 1];
-      if (!q || Math.abs(q.x - p.x) > 0.01 || Math.abs(q.y - p.y) > 0.01) out.push(p);
-    }
-    return out;
+    // 去除相邻重复点 + 折返点
+    return tidy(pts) || [A, B];
   }
 
   // 点到 connector 折线的最短距离（世界坐标）
@@ -147,5 +233,5 @@
     return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
   }
 
-  VX.Routing = { anchorOf, endpointOf, glueNormal, pointsOf, distTo, NORMALS, LEAD };
+  VX.Routing = { anchorOf, endpointOf, glueNormal, curveOf, sampleCurve, pointsOf, distTo, NORMALS, LEAD };
 })();

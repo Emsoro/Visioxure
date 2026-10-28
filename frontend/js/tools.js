@@ -76,6 +76,22 @@
   const measureCanvas = document.createElement("canvas");
   const measureCtx = measureCanvas.getContext("2d");
 
+  // 浅色（白/近白）判定：编辑框底色与透明填充的画布上都必须改深色，否则文字不可见
+  function isLightColor(hex) {
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!m) return true;
+    let h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 190;
+  }
+
+  function editableTextColor(hex) {
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!m) return "#333333";
+    return isLightColor(hex) ? "#333333" : hex;
+  }
+
   function openTextEditor(shape) {
     closeTextEditor(true);
     const vp = VX.Viewport;
@@ -86,18 +102,24 @@
 
     const p = vp.w2s(shape.x, shape.y);
     const f = (shape.style && shape.style.font) || { size: 14, family: "Segoe UI", color: "#333", align: "left" };
+    const boxH = Math.max(shape.h * vp.zoom, f.size * vp.zoom * 1.6);
+    const lineH = f.size * vp.zoom * 1.3;
+    // 让编辑框里的文字位置尽量贴近画布上的最终效果（垂直居中/居底）
+    const padTop = f.vAlign === "middle" ? Math.max(2, (boxH - lineH) / 2)
+                 : f.vAlign === "bottom" ? Math.max(2, boxH - lineH - 2)
+                 : 2;
     Object.assign(ta.style, {
       position: "absolute",
       left: p.x + "px",
       top: p.y + "px",
       width: shape.w * vp.zoom + "px",
-      height: Math.max(shape.h * vp.zoom, f.size * vp.zoom * 1.6) + "px",
+      height: boxH + "px",
       font: `${f.bold ? "bold " : ""}${f.size * vp.zoom}px '${f.family}'`,
-      color: f.color || "#333",
+      color: editableTextColor(f.color),
       textAlign: f.align || "left",
       lineHeight: "1.3",
       border: "1px solid #2f6fed",
-      padding: "2px 4px",
+      padding: `${padTop}px 4px 2px`,
       resize: "none",
       outline: "none",
       background: "#fff",
@@ -107,7 +129,10 @@
     ta.focus();
     S().editing = shape.id;
 
+    let committing = false;
     const commit = (cancel) => {
+      if (committing) return;
+      committing = true;
       const id = S().editing;
       S().editing = null;
       ta.remove();
@@ -116,10 +141,23 @@
       if (!s) return;
       const text = ta.value;
       if (!text.trim()) {
-        VX.History.run("删除文本", () => VX.Model.removeShapes([id]));
+        // 仅文本形状清空后删除；矩形/圆/三角形/梯形等只清掉文字，形状本身保留
+        if (s.type === "text") {
+          VX.History.run("删除文本", () => VX.Model.removeShapes([id]));
+        } else if (s.text) {
+          VX.History.run("清除文字", () => VX.Model.updateShape(id, { text: "" }));
+        }
       } else {
         VX.History.run("编辑文本", () => {
-          VX.Model.updateShape(id, { text });
+          const sh = VX.Model.shape(id);
+          const st = (sh && sh.style) || {};
+          const fo = st.font || {};
+          const patch = { text };
+          // 无填充形状（形状库默认）配白字会“输入后看不见”：直接落为深色字
+          if ((st.fill === "transparent" || !st.fill) && isLightColor(fo.color)) {
+            patch.style = Object.assign({}, st, { font: Object.assign({}, fo, { color: "#333333" }) });
+          }
+          VX.Model.updateShape(id, patch);
           autosizeText(VX.Model.shape(id));
         });
       }
@@ -130,8 +168,8 @@
     ta.addEventListener("blur", () => { if (S().editing === shape.id) commit(false); });
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
-      if (e.key === "Escape") { ta.blur(); commit(true); }
-      if (e.key === "Enter" && e.ctrlKey) { ta.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); commit(true); }
+      if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); commit(false); }
     });
   }
 
@@ -145,10 +183,11 @@
 
   function autosizeText(s) {
     if (!s || !s.text) return;
-    const f = s.style.font;
-    measureCtx.font = `${f.bold ? "bold " : ""}${f.size}px '${f.family}'`;
+    const f = (s.style && s.style.font) || { family: "Segoe UI", size: 14, bold: false };
+    const size = f.size || 14;
+    measureCtx.font = `${f.bold ? "bold " : ""}${size}px '${f.family || "Segoe UI"}'`;
     const lines = VX.Renderer.wrapText(s.text, s.w - 8, (t) => measureCtx.measureText(t).width);
-    const lh = f.size * 1.3;
+    const lh = size * 1.3;
     const need = lines.length * lh + 8;
     if (need > s.h || s.type === "text") s.h = Math.max(need, 20);
   }
@@ -176,6 +215,49 @@
     return best;
   }
 
+  // ---------- 悬停高亮（连接点显示） ----------
+  // shapeId：鼠标下的形状；anchor：{id,index} 吸附到的连接点（无则 null）
+  function setHover(shapeId, anchor) {
+    const st = S();
+    const nextAnchor = anchor || null;
+    const sameAnchor = (st.hoverAnchor === null && nextAnchor === null) ||
+      (st.hoverAnchor && nextAnchor && st.hoverAnchor.id === nextAnchor.id && st.hoverAnchor.index === nextAnchor.index);
+    if (st.hoverShapeId === (shapeId || null) && sameAnchor) return;
+    st.hoverShapeId = shapeId || null;
+    st.hoverAnchor = nextAnchor;
+    VX.Renderer.invalidate();
+  }
+
+  // 命中连接线端点（屏幕像素容差）：返回 "begin" / "end" / null
+  function connEndAt(s, sc) {
+    if (!s || s.type !== "connector") return null;
+    const pts = VX.Routing.pointsOf(s);
+    if (!pts || pts.length < 2) return null;
+    const tol = 8;
+    const a = VX.Viewport.w2s(pts[0].x, pts[0].y);
+    const b = VX.Viewport.w2s(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    const da = Math.hypot(sc.x - a.x, sc.y - a.y);
+    const db = Math.hypot(sc.x - b.x, sc.y - b.y);
+    if (da <= tol && da <= db) return "begin";
+    if (db <= tol) return "end";
+    return null;
+  }
+
+  // 端点悬停高亮（连接线端点手柄放大）
+  function setConnEndHover(id, which) {
+    const st = S();
+    if (!id || !which) {
+      if (!st.hoverConnEnd) return;
+      st.hoverConnEnd = null;
+      VX.Renderer.invalidate();
+      return;
+    }
+    const cur = st.hoverConnEnd;
+    if (cur && cur.id === id && cur.which === which) return;
+    st.hoverConnEnd = { id, which };
+    VX.Renderer.invalidate();
+  }
+
   // ---------- 选择工具 ----------
   const selectTool = {
     cursor: "default",
@@ -194,7 +276,19 @@
           }
         }
       }
-      // 2) 参考线命中
+      // 2) 已选中连接线的端点优先（端点常与形状连接点重叠，避免被形状抢走）
+      if (S().selection.length === 1) {
+        const conn = VX.Model.shape(S().selection[0]);
+        const which = conn && conn.type === "connector" ? connEndAt(conn, sc) : null;
+        if (which) {
+          drag = { mode: "connend", conn, which, moved: false, begun: false };
+          S().connEndDrag = true;
+          S().hoverConnEnd = { id: conn.id, which };
+          VX.Renderer.invalidate();
+          return;
+        }
+      }
+      // 3) 参考线命中
       const g = VX.Hit.guideAt(w.x, w.y);
       if (g) {
         drag = { mode: "guide", index: g.index, startPos: VX.Model.page().guides[g.index].pos, moved: false, screenStart: sc };
@@ -203,7 +297,7 @@
         VX.Events.emit("selection");
         return;
       }
-      // 3) 形状命中 → 选中 + 准备移动
+      // 4) 形状命中 → 选中 + 准备移动
       const shape = VX.Hit.shapeAt(w.x, w.y);
       if (shape) {
         if (e.shiftKey) {
@@ -227,8 +321,19 @@
           S().selection = ids;
         }
         if (shape.type === "connector") {
-          const seg = connSegmentAt(shape, w);
+          // 端点优先：拖动端点可重新吸附到其他形状的连接点
+          const which = connEndAt(shape, sc);
+          if (which) {
+            drag = { mode: "connend", conn: shape, which, moved: false, begun: false };
+            S().connEndDrag = true;
+            S().hoverConnEnd = { id: shape.id, which };
+            VX.Renderer.invalidate();
+            return;
+          }
+          // 曲线没有可拖的折线段（采样点不等于真实控制点），只允许拖端点
+          const seg = shape.route === "curve" ? -1 : connSegmentAt(shape, w);
           if (seg >= 0) {
+            S().hoverConnEnd = null;
             drag = {
               mode: "connseg",
               conn: shape,
@@ -247,9 +352,11 @@
           startW: w,
           moved: false,
         };
+        setHover(null, null);
+        setConnEndHover(null, null);
         return;
       }
-      // 4) 空白 → 框选（组编辑模式下点击组外空白则先退出组）
+      // 5) 空白 → 框选（组编辑模式下点击组外空白则先退出组）
       if (S().enterGroup && !VX.Hit.inAABB(VX.Model.shape(S().enterGroup) || {}, w.x, w.y)) {
         S().enterGroup = null;
       }
@@ -258,7 +365,12 @@
     },
 
     move(w, sc, e) {
-      if (!drag) return;
+      if (!drag) {
+        const h = VX.Hit.shapeAt(w.x, w.y);
+        setHover(h ? h.id : null, null);
+        setConnEndHover(h ? h.id : null, h ? connEndAt(h, sc) : null);
+        return;
+      }
       if (drag.mode === "move") {
         let dx = w.x - drag.startW.x, dy = w.y - drag.startW.y;
         const sn = snapMove(drag.ids, dx, dy);
@@ -302,6 +414,30 @@
         if (!gluedBegin) upd.begin = pts[0];
         if (!gluedEnd) upd.end = pts[pts.length - 1];
         VX.Model.updateShape(c.id, upd);
+      } else if (drag.mode === "connend") {
+        // 拖端点：接近其他形状连接点（14px）即吸附，否则落为自由点（网格吸附）
+        const c = drag.conn;
+        const hit = VX.Hit.shapeAndAnchor(w.x, w.y, 14, true);
+        // 不允许吸到“另一端已占用”的同一连接点：两端同点会让整条连接线缩成一个点（看起来像消失了）
+        const other = c.glue && c.glue[drag.which === "begin" ? "end" : "begin"];
+        const cand = hit ? hit.shape.id + ":" + hit.anchor : null;
+        const snap = cand && cand !== other ? hit : null;
+        setHover(snap ? snap.shape.id : null, snap ? { id: snap.shape.id, index: snap.anchor } : null);
+        const pt = snap ? VX.Routing.anchorOf(snap.shape, snap.anchor) : { x: snapVal(w.x), y: snapVal(w.y) };
+        if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+        if (!drag.begun) { VX.History.begin(); drag.begun = true; drag.moved = true; }
+        const glue = Object.assign({}, c.glue || {});
+        if (snap) glue[drag.which] = cand;
+        else delete glue[drag.which];
+        const upd = { glue };
+        upd[drag.which] = pt;
+        // 手动布线：同步折线端点
+        if (c.route === "manual" && Array.isArray(c.points) && c.points.length >= 2) {
+          const pts = c.points.map((p) => ({ x: p.x, y: p.y }));
+          if (drag.which === "begin") pts[0] = pt; else pts[pts.length - 1] = pt;
+          upd.points = pts;
+        }
+        VX.Model.updateShape(c.id, upd);
       } else if (drag.mode === "resize") {
         resizeShape(drag.shape, drag.handle, drag.start, w, e.shiftKey);
       } else if (drag.mode === "rotate") {
@@ -334,6 +470,11 @@
         S().alignLines = [];
       } else if (drag.mode === "connseg") {
         if (drag.moved) VX.History.commit("移动连接线段");
+      } else if (drag.mode === "connend") {
+        S().connEndDrag = false;
+        S().hoverConnEnd = null;
+        if (drag.moved) VX.History.commit("移动连接线端点");
+        setHover(null, null);
       } else if (drag.mode === "marquee") {
         const m = S().marquee;
         if (m) {
@@ -519,6 +660,7 @@
       if (!drag || drag.mode !== "conn") return;
       const hit = VX.Hit.shapeAndAnchor(w.x, w.y);
       drag.endGlue = hit ? hit.shape.id + ":" + hit.anchor : null;
+      setHover(hit ? hit.shape.id : null, hit ? { id: hit.shape.id, index: hit.anchor } : null);
       S().rubberConn = {
         begin: drag.begin,
         cur: hit ? VX.Routing.anchorOf(hit.shape, hit.anchor) : { x: w.x, y: w.y },
@@ -527,17 +669,21 @@
     up(w, sc, e) {
       if (!drag || drag.mode !== "conn") return;
       const hit = VX.Hit.shapeAndAnchor(w.x, w.y);
-      const end = hit ? VX.Routing.anchorOf(hit.shape, hit.anchor) : { x: w.x, y: w.y };
+      const endGlue = hit ? hit.shape.id + ":" + hit.anchor : null;
+      // 终点不能和起点吸到同一个连接点（否则两端重合，连接线看不见）
+      const okEnd = !!endGlue && endGlue !== drag.beginGlue;
+      const end = okEnd ? VX.Routing.anchorOf(hit.shape, hit.anchor) : { x: w.x, y: w.y };
       const moved = Math.hypot(end.x - drag.begin.x, end.y - drag.begin.y) > 3 / VX.Viewport.zoom;
       const props = {
         type: "connector",
-        glue: { begin: drag.beginGlue, end: hit ? hit.shape.id + ":" + hit.anchor : null },
+        glue: { begin: drag.beginGlue, end: okEnd ? endGlue : null },
         begin: drag.begin,
         end,
         route: "ortho",
       };
       S().rubberConn = null;
       drag = null;
+      setHover(hit ? hit.shape.id : null, null);
       if (moved) {
         let id;
         VX.History.run("创建连接线", () => { id = VX.Model.addShape("connector", props).id; });
@@ -560,7 +706,17 @@
 
   const Tools = {
     current() { return tools[S().tool] || selectTool; },
-    set(name) { if (tools[name]) { S().tool = name; VX.Events.emit("tool"); } },
+    set(name) {
+      if (tools[name]) {
+        S().tool = name;
+        if (name !== "connector") setHover(S().hoverShapeId, null);
+        S().hoverConnEnd = null;
+        S().connEndDrag = false;
+        VX.Events.emit("tool");
+        VX.Renderer.invalidate();
+      }
+    },
+    isDragging() { return !!drag; },
     openTextEditor,   // 供外部（快捷键 F2 等）使用
     closeTextEditor,
     beginHistory() { VX.History.begin(); },

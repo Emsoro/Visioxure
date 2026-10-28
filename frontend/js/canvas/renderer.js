@@ -9,6 +9,28 @@
     return `${f.bold ? "bold " : ""}${f.size}px '${f.family}', 'Microsoft YaHei', sans-serif`;
   }
 
+  // 圆角矩形路径：老版本 WebView2 没有 ctx.roundRect，退化为手写路径
+  // （直接调用不存在的方法会抛异常，导致整帧渲染中断——后面的形状全部画不出来）
+  function roundRectPath(c, x, y, w, h, r) {
+    if (typeof c.roundRect === "function") { c.roundRect(x, y, w, h, r || 0); return; }
+    const rad = Math.max(0, Math.min(r || 0, Math.abs(w) / 2, Math.abs(h) / 2));
+    c.moveTo(x + rad, y);
+    c.lineTo(x + w - rad, y);
+    c.arcTo(x + w, y, x + w, y + rad, rad);
+    c.lineTo(x + w, y + h - rad);
+    c.arcTo(x + w, y + h, x + w - rad, y + h, rad);
+    c.lineTo(x + rad, y + h);
+    c.arcTo(x, y + h, x, y + h - rad, rad);
+    c.lineTo(x, y + rad);
+    c.arcTo(x, y, x + rad, y, rad);
+    c.closePath();
+  }
+
+  // 屏幕最小描边宽度：缩小视图时 1.5px 线条会淡到看不见
+  function strokeWidth(w, zoom) {
+    return Math.max(w || 0, 1 / (zoom || 1));
+  }
+
   // 文本按宽度断行（逐字符，CJK 友好；P1 先支持单段落）
   function wrapText(text, maxWidth, measure) {
     const lines = [];
@@ -23,22 +45,42 @@
     return lines;
   }
 
-  // 连接线：实时布线折线 + 端点箭头（世界坐标绘制）
+  // 连接线：实时布线折线/曲线 + 两端箭头（世界坐标绘制）
   function drawConnector(c, s, label) {
+    const st = s.style || {};
+    const lw = strokeWidth(st.lineWidth || 1.5, VX.state.zoom);
+    const color = st.line || "#37474f";
     const pts = VX.Routing.pointsOf(s);
     if (!pts || pts.length < 2) return;
-    const st = s.style || {};
+
     c.globalAlpha = st.opacity != null ? st.opacity : 1;
-    c.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      if (i) c.lineTo(pts[i].x, pts[i].y); else c.moveTo(pts[i].x, pts[i].y);
-    }
-    c.strokeStyle = st.line || "#37474f";
-    c.lineWidth = st.lineWidth || 1.5;
+    c.strokeStyle = color;
+    c.lineWidth = lw;
     c.lineJoin = "round";
-    c.stroke();
-    if (st.arrowEnd !== false) drawArrowHead(c, pts[pts.length - 2], pts[pts.length - 1]);
-    if (st.arrowBegin) drawArrowHead(c, pts[1], pts[0]);
+    c.lineCap = "round";
+
+    // 箭头方向取端部切线：折线用相邻点，曲线用控制点
+    let beginFrom = pts[1], endFrom = pts[pts.length - 2];
+    if (s.route === "curve") {
+      const cv = VX.Routing.curveOf(s);
+      if (!cv) return;
+      c.beginPath();
+      c.moveTo(cv.A.x, cv.A.y);
+      c.bezierCurveTo(cv.c1.x, cv.c1.y, cv.c2.x, cv.c2.y, cv.B.x, cv.B.y);
+      c.stroke();
+      beginFrom = cv.c1;
+      endFrom = cv.c2;
+    } else {
+      c.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        if (i) c.lineTo(pts[i].x, pts[i].y); else c.moveTo(pts[i].x, pts[i].y);
+      }
+      c.stroke();
+    }
+
+    drawArrow(c, endFrom, pts[pts.length - 1], arrowKind(st.arrowEndKind, st.arrowEnd !== false), lw);
+    drawArrow(c, beginFrom, pts[0], arrowKind(st.arrowBeginKind, !!st.arrowBegin), lw);
+
     c.globalAlpha = 1;
     if (label) drawConnectorLabel(c, s, pts, label);
   }
@@ -65,17 +107,70 @@
     c.restore();
   }
 
-  function drawArrowHead(c, from, to) {
-    const ang = Math.atan2(to.y - from.y, to.x - from.x);
-    const size = 9;
-    const a1 = ang + Math.PI * 0.85, a2 = ang - Math.PI * 0.85;
-    c.beginPath();
-    c.moveTo(to.x, to.y);
-    c.lineTo(to.x + Math.cos(a1) * size, to.y + Math.sin(a1) * size);
-    c.lineTo(to.x + Math.cos(a2) * size, to.y + Math.sin(a2) * size);
-    c.closePath();
-    c.fillStyle = c.strokeStyle;
-    c.fill();
+  // 箭头形状：旧布尔值（true/false）与新 kind 字符统一归一
+  // kind：none / arrow（实心）/ open（开口）/ triangle（空心三角）/ dot（圆点）/ diamond（菱形）/ bar（竖线）
+  function arrowKind(kind, flag) {
+    if (typeof kind === "string" && kind) return kind;
+    return flag ? "arrow" : "none";
+  }
+
+  // 在 tip 处按 from→tip 方向画箭头
+  function drawArrow(c, from, tip, kind, lw) {
+    if (!kind || kind === "none") return;
+    const dx = tip.x - from.x, dy = tip.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) return;
+    const ang = Math.atan2(dy, dx);
+    const size = 7 + Math.max(1, lw) * 2.2;
+    const color = c.strokeStyle;
+    c.save();
+    c.lineWidth = Math.max(1.2, lw);
+    c.lineJoin = "miter";
+    if (kind === "open") {
+      const a1 = ang + Math.PI * 0.8, a2 = ang - Math.PI * 0.8;
+      c.strokeStyle = color;
+      c.beginPath();
+      c.moveTo(tip.x + Math.cos(a1) * size, tip.y + Math.sin(a1) * size);
+      c.lineTo(tip.x, tip.y);
+      c.lineTo(tip.x + Math.cos(a2) * size, tip.y + Math.sin(a2) * size);
+      c.stroke();
+    } else if (kind === "dot") {
+      c.beginPath();
+      c.arc(tip.x, tip.y, size * 0.45, 0, Math.PI * 2);
+      c.fillStyle = color;
+      c.fill();
+    } else if (kind === "diamond") {
+      const half = size * 0.95, wing = size * 0.34;
+      const nx = -Math.sin(ang) * wing, ny = Math.cos(ang) * wing;
+      const mx = tip.x - Math.cos(ang) * half, my = tip.y - Math.sin(ang) * half;
+      const bx = tip.x - Math.cos(ang) * half * 2, by = tip.y - Math.sin(ang) * half * 2;
+      c.beginPath();
+      c.moveTo(tip.x, tip.y);
+      c.lineTo(mx + nx, my + ny);
+      c.lineTo(bx, by);
+      c.lineTo(mx - nx, my - ny);
+      c.closePath();
+      c.fillStyle = color;
+      c.fill();
+    } else if (kind === "bar") {
+      const nx = -Math.sin(ang) * size * 0.72, ny = Math.cos(ang) * size * 0.72;
+      c.strokeStyle = color;
+      c.beginPath();
+      c.moveTo(tip.x - nx, tip.y - ny);
+      c.lineTo(tip.x + nx, tip.y + ny);
+      c.stroke();
+    } else {
+      const a1 = ang + Math.PI * 0.86, a2 = ang - Math.PI * 0.86;
+      c.beginPath();
+      c.moveTo(tip.x, tip.y);
+      c.lineTo(tip.x + Math.cos(a1) * size, tip.y + Math.sin(a1) * size);
+      c.lineTo(tip.x + Math.cos(a2) * size, tip.y + Math.sin(a2) * size);
+      c.closePath();
+      c.strokeStyle = color;
+      c.stroke();
+      if (kind !== "triangle") { c.fillStyle = color; c.fill(); }
+    }
+    c.restore();
   }
 
   // opts: { editor:true, over(shape) → { visible, text, state, dx, dy, opacity } }（预览用）
@@ -141,10 +236,10 @@
       }
     } else {
       const r = Math.min(st.cornerRadius || 0, hw, hh);
-      c.roundRect(-hw, -hh, s.w, s.h, r);
+      roundRectPath(c, -hw, -hh, s.w, s.h, r);
     }
     if (hasFill) { c.fillStyle = st.fill; c.fill(s.type === "path" && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd"); }
-    if (hasLine) { c.strokeStyle = st.line; c.lineWidth = st.lineWidth; c.stroke(); }
+    if (hasLine) { c.strokeStyle = st.line; c.lineWidth = strokeWidth(st.lineWidth, vp.zoom); c.stroke(); }
 
     // 文本
     if (text) {
@@ -173,8 +268,93 @@
     c.translate(vp.ox, vp.oy);
     c.scale(vp.zoom, vp.zoom);
     const shapes = (page.shapes || []).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
-    for (const s of shapes) drawShape(c, s, vp, opts);
+    // 单个形状绘制出错不能中断整帧（否则它之后的所有形状/选择框一起消失）
+    for (const s of shapes) {
+      c.save();
+      try { drawShape(c, s, vp, opts); } catch (e) { console.error("draw shape failed:", s.id, s.type, e); }
+      c.restore();
+    }
     c.restore();
+  }
+
+  // 连接点：形状四边中点（与 routing.anchorOf 的 0=上/1=右/2=下/3=左 一致）
+  // 显示时机：连接线工具激活（全部形状）/ 单选 / 悬停；吸附点高亮
+  function canConnect(s) {
+    return s && s.type !== "connector" && s.type !== "group" && VX.Hit.selectable(s);
+  }
+
+  function drawConnectionPoints(c, vp) {
+    const st = VX.state;
+    if (st.editing) return;
+    const targets = [];
+    const seen = new Set();
+    const push = (s) => {
+      if (!canConnect(s) || seen.has(s.id)) return;
+      seen.add(s.id);
+      targets.push(s);
+    };
+    if (st.tool === "connector" || st.connEndDrag) {
+      const shapes = VX.Model.shapes();
+      for (let i = 0; i < shapes.length && targets.length < 200; i++) push(shapes[i]);
+    } else {
+      if (st.selection.length === 1) push(VX.Model.shape(st.selection[0]));
+      if (st.hoverShapeId) push(VX.Model.shape(st.hoverShapeId));
+    }
+    if (!targets.length) return;
+
+    const ha = st.hoverAnchor;
+    c.save();
+    for (const s of targets) {
+      for (let n = 0; n < 4; n++) {
+        const a = VX.Routing.anchorOf(s, n);
+        const p = vp.w2s(a.x, a.y);
+        const active = !!(ha && ha.id === s.id && ha.index === n);
+        const r = active ? 6 : 4;
+        c.beginPath();
+        c.arc(p.x, p.y, r, 0, Math.PI * 2);
+        c.fillStyle = active ? "#2f6fed" : "#ffffff";
+        c.fill();
+        c.lineWidth = active ? 2 : 1;
+        c.strokeStyle = "#2f6fed";
+        c.stroke();
+        // 十字标记：强调“可连接点”（Office 风格）
+        c.beginPath();
+        c.strokeStyle = active ? "#ffffff" : "#2f6fed";
+        c.lineWidth = 1;
+        c.moveTo(p.x - 2, p.y + 0.5); c.lineTo(p.x + 2, p.y + 0.5);
+        c.moveTo(p.x + 0.5, p.y - 2); c.lineTo(p.x + 0.5, p.y + 2);
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+
+  // 连接线端点手柄：悬停（未选中）时也显示，便于直接拖端点重新吸附
+  function drawConnectorEnds(c, vp) {
+    const st = VX.state;
+    if (st.editing) return;
+    const ids = [];
+    if (st.hoverShapeId && !st.selection.includes(st.hoverShapeId)) ids.push(st.hoverShapeId);
+    const hce = st.hoverConnEnd;
+    if (hce && !st.selection.includes(hce.id) && ids.indexOf(hce.id) < 0) ids.push(hce.id);
+    for (const id of ids) {
+      const s = VX.Model.shape(id);
+      if (!s || s.type !== "connector") continue;
+      const pts = VX.Routing.pointsOf(s);
+      if (!pts || pts.length < 2) continue;
+      const ends = [[pts[0], "begin"], [pts[pts.length - 1], "end"]];
+      for (const [p, which] of ends) {
+        const q = vp.w2s(p.x, p.y);
+        const active = !!(hce && hce.id === s.id && hce.which === which);
+        c.beginPath();
+        c.arc(q.x, q.y, active ? 6 : 4, 0, Math.PI * 2);
+        c.fillStyle = active ? "#2f6fed" : "#ffffff";
+        c.fill();
+        c.strokeStyle = "#2f6fed";
+        c.lineWidth = active ? 2 : 1;
+        c.stroke();
+      }
+    }
   }
 
   function drawPage(c, pg, vp, opts) {
@@ -237,6 +417,11 @@
 
     // 形状（z 升序）：世界坐标 → 视口（缩放 + 平移）
     drawShapes(c, pg, vp, { editor: true });
+
+    // 连接点（悬停 / 单选 / 连接线工具）
+    drawConnectionPoints(c, vp);
+    // 连接线端点手柄（悬停时）
+    drawConnectorEnds(c, vp);
 
     // 瞬态对齐线（吸附反馈）
     for (const line of VX.state.alignLines) {

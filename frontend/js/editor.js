@@ -8,6 +8,15 @@
   let guideCreate = null; // 从标尺拖出参考线 {dir, index}
 
   // ---------- 画布鼠标 ----------
+  function clearHover() {
+    const st = S();
+    if (!st.hoverShapeId && !st.hoverAnchor && !st.hoverConnEnd) return;
+    st.hoverShapeId = null;
+    st.hoverAnchor = null;
+    st.hoverConnEnd = null;
+    VX.Renderer.invalidate();
+  }
+
   function bindCanvas() {
     canvas.addEventListener("mousedown", (e) => {
       if (S().editing) return;
@@ -39,9 +48,14 @@
         return;
       }
       const w = VX.Viewport.s2w(sc.x, sc.y);
-      VX.Tools.onMouseMove(w, sc, e);
+      const inside = sc.x >= 0 && sc.y >= 0 && sc.x <= canvas.clientWidth && sc.y <= canvas.clientHeight;
+      if (inside || VX.Tools.isDragging()) VX.Tools.onMouseMove(w, sc, e);
+      else clearHover();
       VX.Renderer.invalidate(); // 标尺鼠标指示
     });
+
+    // 鼠标离开画布（且未在拖拽）：清理悬停连接点
+    canvas.addEventListener("mouseleave", () => { if (!VX.Tools.isDragging()) clearHover(); });
 
     window.addEventListener("mouseup", (e) => {
       if (guideCreate) {

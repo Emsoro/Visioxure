@@ -35,32 +35,47 @@
       if (s.type === "connector") {
         const pts = VX.Routing.pointsOf(s);
         if (pts && pts.length > 1) {
+          const isCurve = s.route === "curve";
+          const cv = isCurve ? VX.Routing.curveOf(s) : null;
           c.save();
           c.beginPath();
-          for (let i = 0; i < pts.length; i++) {
-            const q = vp.w2s(pts[i].x, pts[i].y);
-            if (i) c.lineTo(q.x, q.y); else c.moveTo(q.x, q.y);
+          if (cv) {
+            const a = vp.w2s(cv.A.x, cv.A.y), c1 = vp.w2s(cv.c1.x, cv.c1.y);
+            const c2 = vp.w2s(cv.c2.x, cv.c2.y), b = vp.w2s(cv.B.x, cv.B.y);
+            c.moveTo(a.x, a.y);
+            c.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
+          } else {
+            for (let i = 0; i < pts.length; i++) {
+              const q = vp.w2s(pts[i].x, pts[i].y);
+              if (i) c.lineTo(q.x, q.y); else c.moveTo(q.x, q.y);
+            }
           }
           c.strokeStyle = "#2f6fed";
           c.lineWidth = 2;
           c.stroke();
-          // 每段中点的小方块（可拖动整段）
-          for (let i = 0; i < pts.length - 1; i++) {
-            const q = vp.w2s((pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2);
-            c.fillStyle = "#ffffff";
-            c.fillRect(q.x - 3.5, q.y - 3.5, 7, 7);
-            c.strokeStyle = "#2f6fed";
-            c.lineWidth = 1;
-            c.strokeRect(q.x - 3 + 0.5, q.y - 3 + 0.5, 6, 6);
+          // 每段中点的小方块（可拖动整段）；曲线不显示，避免弧线上排满控制点
+          if (!isCurve) {
+            for (let i = 0; i < pts.length - 1; i++) {
+              const q = vp.w2s((pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2);
+              c.fillStyle = "#ffffff";
+              c.fillRect(q.x - 3.5, q.y - 3.5, 7, 7);
+              c.strokeStyle = "#2f6fed";
+              c.lineWidth = 1;
+              c.strokeRect(q.x - 3 + 0.5, q.y - 3 + 0.5, 6, 6);
+            }
           }
-          for (const p of [pts[0], pts[pts.length - 1]]) {
+          // 端点手柄：可拖拽重新吸附到其他形状的连接点（悬停/拖拽时放大高亮）
+          const hce = VX.state.hoverConnEnd;
+          const ends = [[pts[0], "begin"], [pts[pts.length - 1], "end"]];
+          for (const [p, which] of ends) {
             const q = vp.w2s(p.x, p.y);
+            const active = !!(hce && hce.id === s.id && hce.which === which);
             c.beginPath();
-            c.arc(q.x, q.y, 4, 0, Math.PI * 2);
-            c.fillStyle = "#ffffff";
+            c.arc(q.x, q.y, active ? 6 : 4, 0, Math.PI * 2);
+            c.fillStyle = active ? "#2f6fed" : "#ffffff";
             c.fill();
             c.strokeStyle = "#2f6fed";
-            c.lineWidth = 1;
+            c.lineWidth = active ? 2 : 1;
             c.stroke();
           }
           c.restore();
