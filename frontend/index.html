@@ -112,6 +112,7 @@
     <!-- 右侧检查器 -->
     <aside id="right-panel">
       <div class="panel-tabs" data-tabs>
+        <span class="panel-tab" data-tab="props">属性</span>
         <span class="panel-tab active" data-tab="style">样式</span>
         <span class="panel-tab" data-tab="interact">交互</span>
         <span class="panel-tab" data-tab="notes">注释</span>
@@ -121,6 +122,7 @@
           <svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
         </button>
       </div>
+      <div class="panel-body hidden" data-tab-page="props" id="props-panel"></div>
       <div class="panel-body" data-tab-page="style" id="style-panel"></div>
       <div class="panel-body hidden" data-tab-page="interact" id="interact-panel"></div>
       <div class="panel-body hidden" data-tab-page="notes" id="notes-panel"></div>
@@ -163,6 +165,7 @@
 <script src="js/meta.js"></script>
 <script src="js/page.js"></script>
 <script src="js/style.js"></script>
+<script src="js/props.js"></script>
 <script src="js/fileio.js"></script>
 <script src="js/app.js" defer></script>
 </body>

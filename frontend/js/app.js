@@ -96,6 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
   VX.Model.init();
   VX.Editor.init();
   if (VX.StylePanel) VX.StylePanel.init();
+  if (VX.Props) VX.Props.init();
   if (VX.Inspect) VX.Inspect.init();
   if (VX.Meta) VX.Meta.init();
   if (VX.PagePanel) VX.PagePanel.init();

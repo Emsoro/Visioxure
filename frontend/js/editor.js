@@ -120,7 +120,11 @@
   function bindKeyboard() {
     window.addEventListener("keydown", (e) => {
       const tag = (e.target.tagName || "").toLowerCase();
-      if (tag === "textarea" || tag === "input") return;
+      // 数字输入框（属性面板）：只放行文档级撤销/重做，其余按键留给输入框，
+      // 否则改完数值不点画布按 Ctrl+Z 会被这里直接 return 掉
+      const numberInput = tag === "input" && e.target.type === "number";
+      if (tag === "textarea" || (tag === "input" && !numberInput)) return;
+      if (numberInput && !(e.ctrlKey && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y"))) return;
 
       if (e.key === " ") { S().spaceDown = true; e.preventDefault(); return; }
 

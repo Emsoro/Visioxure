@@ -95,10 +95,13 @@ body {
   background: var(--chrome-bg);
 }
 .panel-tab {
-  padding: 7px 10px;
+  padding: 7px 8px;
   cursor: pointer;
   color: var(--text-dim);
   border-bottom: 2px solid transparent;
+  /* 右侧 6 个 Tab（属性/样式/交互/注释/图层/页面）在 280px 内不能折行 */
+  white-space: nowrap;
+  flex: none;
 }
 .panel-tab:hover { color: var(--text); }
 .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--panel-bg); }

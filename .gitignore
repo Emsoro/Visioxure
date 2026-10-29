@@ -37,6 +37,7 @@ Release/
 .trae-html-share-packages/
 .vscode/
 __pycache__/
+node_modules/
 *.log
 
 # 临时测试输出

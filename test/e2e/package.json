@@ -1,0 +1,12 @@
+{
+  "name": "visioxure-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Visioxure 前端 Playwright 验收脚本（复用本机 Edge，不下载浏览器内核）",
+  "scripts": {
+    "test": "node run_all.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

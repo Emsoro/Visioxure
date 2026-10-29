@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>props panel test</title>
+<link rel="stylesheet" href="../../frontend/css/app.css">
+<style>
+  html, body { margin: 0; background: #dfe3e8; }
+  #right-panel { width: 268px; height: 100vh; background: var(--panel-bg, #fff); border-left: 1px solid #d5dae2; }
+  #props-panel { padding: 6px 10px 20px; }
+</style>
+</head>
+<body>
+<aside id="right-panel">
+  <div class="panel-tabs" data-tabs>
+    <span class="panel-tab active" data-tab="props">属性</span>
+    <span class="panel-tab" data-tab="style">样式</span>
+    <span class="panel-tab" data-tab="interact">交互</span>
+  </div>
+  <div class="panel-body" data-tab-page="props" id="props-panel"></div>
+</aside>
+
+<script src="../../frontend/js/model.js"></script>
+<script src="../../frontend/js/history.js"></script>
+<script src="../../frontend/js/colorpicker.js"></script>
+<script src="../../frontend/js/props.js"></script>
+<script>
+  VX.Renderer = { invalidate() {} };
+  VX.Model.init();
+
+  const rect = VX.Model.addShape("rect", { x: 120, y: 80, w: 200, h: 60, text: "主要按钮" });
+  const ell = VX.Model.addShape("ellipse", { x: 380, y: 80, w: 120, h: 120, text: "圆形" });
+  const conn = VX.Model.addShape("connector", {
+    x: 120, y: 200, w: 200, h: 40,
+    begin: { x: 120, y: 200 }, end: { x: 320, y: 240 },
+  });
+
+  VX.state.selection = [rect.id];
+  VX.Props.init();
+
+  const errors = [];
+  function ok(cond, msg) { if (!cond) errors.push(msg); }
+  function rowByLabel(label) {
+    return Array.from(document.querySelectorAll("#props-panel .sp-row"))
+      .find((r) => (r.querySelector(".sp-label") || {}).textContent === label) || null;
+  }
+  function numInput(label) {
+    const r = rowByLabel(label);
+    return r ? r.querySelector("input") : null;
+  }
+  function setNum(label, v) {
+    const i = numInput(label);
+    if (!i) { errors.push("缺少数值行：" + label); return; }
+    i.value = String(v);
+    i.dispatchEvent(new Event("change"));
+  }
+  function clickSeg(label, text) {
+    const r = rowByLabel(label);
+    if (!r) { errors.push("缺少分段行：" + label); return; }
+    const b = Array.from(r.querySelectorAll(".sp-seg-btn")).find((x) => x.textContent === text);
+    if (!b) { errors.push("缺少分段按钮：" + label + "/" + text); return; }
+    b.click();
+  }
+  const shape = (id) => VX.Model.shape(id);
+
+  // 1. 位置/尺寸/旋转/圆角/不透明度
+  setNum("X", 200);
+  ok(shape(rect.id).x === 200, "X 未写入模型");
+  setNum("宽", 240);
+  ok(shape(rect.id).w === 240, "宽 未写入模型");
+  setNum("旋转", 90);
+  ok(Math.abs(shape(rect.id).angle - Math.PI / 2) < 1e-6, "旋转未换算为弧度");
+  setNum("圆角", 12);
+  ok(shape(rect.id).style.cornerRadius === 12, "圆角未写入样式");
+  setNum("不透明度", 50);
+  ok(Math.abs(shape(rect.id).style.opacity - 0.5) < 1e-9, "不透明度未换算");
+
+  // 2. 撤销：一次修改 = 一条事务
+  VX.History.undo();
+  ok(Math.abs(VX.Model.shape(rect.id).style.opacity - 1) < 1e-9 || VX.Model.shape(rect.id).style.opacity == null,
+     "撤销未回退不透明度");
+
+  // 3. 文本样式
+  setNum("字号", 20);
+  ok(VX.Model.shape(rect.id).style.font.size === 20, "字号未写入");
+  clickSeg("加粗", "加粗");
+  ok(VX.Model.shape(rect.id).style.font.bold === true, "加粗未写入");
+  clickSeg("水平", "中");
+  ok(VX.Model.shape(rect.id).style.font.align === "center", "水平对齐未写入");
+  clickSeg("垂直", "中");
+  ok(VX.Model.shape(rect.id).style.font.vAlign === "middle", "垂直对齐未写入");
+
+  // 4. 多选：显示公共值 / 多个值
+  VX.state.selection = [rect.id, ell.id];
+  VX.Model.emit("selection");
+  const head = document.querySelector("#props-panel .sp-head");
+  ok(head && head.textContent.indexOf("2 个对象") === 0, "多选标题错误：" + (head && head.textContent));
+  const xIn = numInput("X");
+  ok(xIn && xIn.value === "" && xIn.placeholder === "多个值", "多选 X 未显示多个值");
+
+  // 5. 连接线：不显示位置与大小
+  VX.state.selection = [conn.id];
+  VX.Model.emit("selection");
+  const secs = Array.from(document.querySelectorAll("#props-panel .prop-section")).map((s) => s.textContent);
+  ok(secs.indexOf("位置与大小") < 0, "连接线不应出现位置与大小");
+  ok(secs.indexOf("文本") >= 0, "连接线应保留文本样式");
+
+  // 6. 恢复演示状态（单形状，默认数值），并更新数值回显
+  VX.state.selection = [rect.id];
+  VX.Model.emit("selection");
+  const r2 = VX.Model.shape(rect.id);
+  r2.x = 120; r2.y = 80; r2.w = 200; r2.h = 60; r2.angle = 0;
+  r2.style.cornerRadius = 8;
+  VX.Model.emit("change");
+
+  document.title = errors.length ? ("PROPS FAIL: " + errors.join(" / ")) : "PROPS PASS";
+  document.body.dataset.ready = "1";
+</script>
+</body>
+</html>
