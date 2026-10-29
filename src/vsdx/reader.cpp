@@ -108,6 +108,41 @@ struct GeometryInfo {
     std::vector<std::vector<Pt>> rings;  // Visio 局部坐标
 };
 
+constexpr double kPi = 3.14159265358979323846;
+
+// 由「起点 / 弧上一点 / 终点」确定圆弧，按 15° 采样后追加到折线（不含起点）。
+// 圆弧行不能只连端点：圆角矩形/胶囊形（Visio 的开始、结束框）的圆角会退化成直角
+void AppendArc(std::vector<Pt>& out, const Pt& p0, const Pt& apex, const Pt& p2) {
+    double d = 2 * (p0.x * (apex.y - p2.y) + apex.x * (p2.y - p0.y) + p2.x * (p0.y - apex.y));
+    if (!(std::fabs(d) > 1e-12)) { out.push_back(p2); return; }  // 三点共线：就是直线
+    double p0s = p0.x * p0.x + p0.y * p0.y;
+    double aps = apex.x * apex.x + apex.y * apex.y;
+    double p2s = p2.x * p2.x + p2.y * p2.y;
+    Pt c{(p0s * (apex.y - p2.y) + aps * (p2.y - p0.y) + p2s * (p0.y - apex.y)) / d,
+         (p0s * (p2.x - apex.x) + aps * (p0.x - p2.x) + p2s * (apex.x - p0.x)) / d};
+    double r = std::hypot(p0.x - c.x, p0.y - c.y);
+    if (!std::isfinite(r) || r < 1e-9) { out.push_back(p2); return; }
+    auto norm = [](double a) {
+        while (a > kPi) a -= 2 * kPi;
+        while (a < -kPi) a += 2 * kPi;
+        return a;
+    };
+    double a0 = std::atan2(p0.y - c.y, p0.x - c.x);
+    double am = std::atan2(apex.y - c.y, apex.x - c.x);
+    double a2 = std::atan2(p2.y - c.y, p2.x - c.x);
+    double sweep = norm(a2 - a0), mid = norm(am - a0);
+    // 采样方向必须经过弧上那一点，否则会画出另一半圆弧（圆角往内凹）
+    bool through = sweep >= 0 ? (mid >= 0 && mid <= sweep) : (mid <= 0 && mid >= sweep);
+    if (!through) sweep += sweep > 0 ? -2 * kPi : 2 * kPi;
+    int n = static_cast<int>(std::ceil(std::fabs(sweep) / (kPi / 12)));
+    n = std::max(2, std::min(64, n));
+    for (int i = 1; i < n; ++i) {
+        double a = a0 + sweep * i / n;
+        out.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
+    }
+    out.push_back(p2);
+}
+
 // 几何行 → 折线环。Visio 的 Rel* 行以形状宽高的比例存储坐标；
 // 贝塞尔/圆弧行按采样点近似为折线（编辑器内部只支持折线 path）。
 GeometryInfo ReadGeometry(const XmlNode& shape, double wIn, double hIn) {
@@ -124,10 +159,9 @@ GeometryInfo ReadGeometry(const XmlNode& shape, double wIn, double hIn) {
             }
             bool rel = t.rfind("Rel", 0) == 0;
             std::string t2 = rel ? t.substr(3) : t;
-            // 圆弧行（ArcTo/EllipticalArcTo）按终点直线近似（编辑器内部只支持折线）
-            bool arc = t2 == "ArcTo" || t2 == "EllipticalArcTo";
-            if (arc) t2 = "LineTo";
-            if (t2 != "MoveTo" && t2 != "LineTo" && t2 != "CubBezTo") continue;
+            bool isBowArc = t2 == "ArcTo";           // A = 弧中点相对弦中点的带符号偏移
+            bool isEllipseArc = t2 == "EllipticalArcTo";  // A/B = 弧上一点（通常是弧中点）
+            if (t2 != "MoveTo" && t2 != "LineTo" && t2 != "CubBezTo" && !isBowArc && !isEllipseArc) continue;
 
             std::map<std::string, std::string> vals;
             for (const XmlNode& c : row.children) {
@@ -137,33 +171,59 @@ GeometryInfo ReadGeometry(const XmlNode& shape, double wIn, double hIn) {
                 auto it = vals.find(n);
                 return it == vals.end() ? 0.0 : P2D(it->second);
             };
-            auto pt = [&](const char* xn, const char* yn, const char* an = nullptr, const char* bn = nullptr) {
+            // 行内缺失的 X/Y 沿用当前点（Visio 允许省略未变化的坐标）；
+            // 圆弧/贝塞尔的 A~D 缺省就是 0（不能拿当前点充数，否则弓高会变成 0）
+            auto pt = [&](const char* xn, const char* yn, double dx, double dy) {
+                auto ix = vals.find(xn), iy = vals.find(yn);
+                Pt p{ix == vals.end() ? dx : P2D(ix->second), iy == vals.end() ? dy : P2D(iy->second)};
+                if (rel) { p.x *= wIn; p.y *= hIn; }
+                return p;
+            };
+            auto ptAB = [&](const char* xn, const char* yn) {
                 Pt p{num(xn), num(yn)};
                 if (rel) { p.x *= wIn; p.y *= hIn; }
-                if (an && bn) { p.x += num(an); p.y += num(bn); }
                 return p;
             };
 
             if (t2 == "MoveTo") {
                 if (cur.size() >= 2) g.rings.push_back(cur);
                 cur.clear();
-                cur.push_back(pt("X", "Y"));
+                cur.push_back(pt("X", "Y", 0, 0));
             } else if (t2 == "LineTo") {
-                if (cur.empty()) cur.push_back(pt("X", "Y"));
-                else cur.push_back(pt("X", "Y"));
-            } else {
+                if (cur.empty()) cur.push_back(pt("X", "Y", 0, 0));
+                else cur.push_back(pt("X", "Y", cur.back().x, cur.back().y));
+            } else if (t2 == "CubBezTo") {
                 // CubBezTo: A/B = 控制点1，C/D = 控制点2，X/Y = 终点
                 if (cur.empty()) cur.push_back({0, 0});
                 Pt p0 = cur.back();
-                Pt c1 = pt("A", "B");
-                Pt c2 = pt("C", "D");
-                Pt p3 = pt("X", "Y");
+                Pt c1 = ptAB("A", "B");
+                Pt c2 = ptAB("C", "D");
+                Pt p3 = pt("X", "Y", p0.x, p0.y);
                 for (int i = 1; i <= 8; ++i) {
                     double u = 1.0 - i / 8.0, t3 = i / 8.0;
                     double x = u * u * u * p0.x + 3 * u * u * t3 * c1.x + 3 * u * t3 * t3 * c2.x + t3 * t3 * t3 * p3.x;
                     double y = u * u * u * p0.y + 3 * u * u * t3 * c1.y + 3 * u * t3 * t3 * c2.y + t3 * t3 * t3 * p3.y;
                     cur.push_back({x, y});
                 }
+            } else if (isBowArc) {
+                if (cur.empty()) cur.push_back({0, 0});
+                Pt p0 = cur.back();
+                Pt p2 = pt("X", "Y", p0.x, p0.y);
+                double bow = num("A");
+                double len = std::hypot(p2.x - p0.x, p2.y - p0.y);
+                if (len < 1e-9) { cur.push_back(p2); }
+                else {
+                    // 弦的左法线方向为弓高正方向
+                    Pt apex{(p0.x + p2.x) / 2 - (p2.y - p0.y) / len * bow,
+                            (p0.y + p2.y) / 2 + (p2.x - p0.x) / len * bow};
+                    AppendArc(cur, p0, apex, p2);
+                }
+            } else {
+                if (cur.empty()) cur.push_back({0, 0});
+                Pt p0 = cur.back();
+                Pt p2 = pt("X", "Y", p0.x, p0.y);
+                Pt apex = ptAB("A", "B");
+                AppendArc(cur, p0, apex, p2);
             }
         }
         if (cur.size() >= 2) g.rings.push_back(cur);
@@ -203,32 +263,32 @@ std::map<int, std::string> ParsePalette(const std::string& documentXml) {
     return palette;
 }
 
-Pt AnchorOf(const nlohmann::json& t, int n) {
-    double x = t.value("x", 0.0), y = t.value("y", 0.0);
-    double w = t.value("w", 0.0), h = t.value("h", 0.0);
-    double angle = t.value("angle", 0.0);
-    double cx = x + w / 2, cy = y + h / 2;
-    Pt pts[4] = {{cx, y}, {x + w, cy}, {cx, y + h}, {x, cy}};
-    Pt p = pts[n & 3];
-    if (angle != 0) {
-        double c = std::cos(angle), s = std::sin(angle);
-        return {cx + (p.x - cx) * c - (p.y - cy) * s, cy + (p.x - cx) * s + (p.y - cy) * c};
+// 端点 → 内部连接锚点（0=上 1=右 2=下 3=左）。内部模型只有四边中点，
+// 而 Visio 的连接点可以落在边上的任意位置；强行吸附到「最近中点」会让连接线
+// 跳到错误的一边（例如右边缘上的 9 个点全部飞到右上角），因此只接受
+// 「贴在边上、且位于该边中点附近」的端点，其余情况保留端点原坐标（不粘附）。
+bool EdgeAnchorOf(const nlohmann::json& t, double px, double py, int& anchor) {
+    const double w = t.value("w", 0.0), h = t.value("h", 0.0);
+    if (!(w > 1.0 && h > 1.0)) return false;
+    const double cx = t.value("x", 0.0) + w / 2, cy = t.value("y", 0.0) + h / 2;
+    double dx = px - cx, dy = py - cy;
+    const double angle = t.value("angle", 0.0);
+    if (angle != 0) {  // 转回形状自身的未旋转坐标系再判断贴边
+        const double c = std::cos(-angle), s = std::sin(-angle);
+        const double nx = dx * c - dy * s, ny = dx * s + dy * c;
+        dx = nx;
+        dy = ny;
     }
-    return p;
-}
-
-int NearestAnchor(const nlohmann::json& target, Pt p) {
-    int best = 0;
-    double bestDist = 1e18;
-    for (int i = 0; i < 4; ++i) {
-        Pt a = AnchorOf(target, i);
-        double d = (a.x - p.x) * (a.x - p.x) + (a.y - p.y) * (a.y - p.y);
-        if (d < bestDist) {
-            bestDist = d;
-            best = i;
-        }
+    const double dEdge[4] = {std::fabs(dy + h / 2), std::fabs(dx - w / 2), std::fabs(dy - h / 2),
+                             std::fabs(dx + w / 2)};
+    const double dMid[4] = {std::fabs(dx), std::fabs(dy), std::fabs(dx), std::fabs(dy)};
+    int side = 0;
+    for (int i = 1; i < 4; ++i) {
+        if (dEdge[i] < dEdge[side]) side = i;
     }
-    return best;
+    if (dEdge[side] > 2.0 || dMid[side] > 4.0) return false;
+    anchor = side;
+    return true;
 }
 
 nlohmann::json* FindShapeById(nlohmann::json& arr, const std::string& id) {
@@ -334,7 +394,8 @@ bool IsFillCell(const std::string& cell) {
 }
 
 // Visio 箭头类型号（BeginArrow/EndArrow，0~45）→ 编辑器内部箭头形状名
-// 0=无；1/3/7/8/12/25~27=开口；2/4~6/13=实心；9=竖线；10=圆点；11/22=菱形；14~16=空心三角
+// 0=无；1/3/7/8/12/25~27=开口；2/4~6/13=实心三角；9=斜线；10=圆点；
+// 11=实心方块；22=空心菱形；14~16=空心三角（Visio 导出的 SVG 里能看到每个类型的真实形状）
 const char* ArrowKindOfType(int t) {
     switch (t) {
         case 0: return "none";
@@ -342,7 +403,8 @@ const char* ArrowKindOfType(int t) {
         case 2: case 4: case 5: case 6: case 13: return "arrow";
         case 9: return "bar";
         case 10: return "dot";
-        case 11: case 22: return "diamond";
+        case 11: return "square";
+        case 22: return "diamond";
         case 14: case 15: case 16: return "triangle";
         default: return "arrow";
     }
@@ -395,28 +457,40 @@ void MergeGeometrySection(XmlNode& out, const XmlNode& pageSec, double mx, doubl
         out.children.push_back(pageSec);
         return;
     }
+    // 页面坐标 → 母版坐标（后续统一按母版尺寸缩放）；Rel* 行存的是比例，不需要换算
+    auto toMaster = [&](const XmlNode& c, bool rel) {
+        XmlNode copy = c;
+        if (rel) return copy;
+        std::string n = c.attr("N");
+        if (n != "X" && n != "Y" && n != "A" && n != "B" && n != "C" && n != "D") return copy;
+        double v = P2D(c.attr("V"), 0);
+        v *= (n == "Y" || n == "B" || n == "D") ? my : mx;
+        std::string sv = std::to_string(v);
+        bool setV = false;
+        for (auto& kv : copy.attrs) {
+            if (kv.first == "V") { kv.second = sv; setV = true; break; }
+        }
+        if (!setV) copy.attrs.push_back({"V", sv});
+        return copy;
+    };
     for (const XmlNode& row : pageSec.children) {
         if (row.tag != "Row") continue;
+        // Del="1" 是 Visio 的“删除行”标记：母版里对应的行也要一并去掉，
+        // 否则会多出母版的默认拐点（连接线尾部凭空多一折）
+        if (row.attr("Del") == "1") {
+            std::string rix = row.attr("IX");
+            for (auto it = target->children.begin(); it != target->children.end(); ++it) {
+                if (it->tag == "Row" && it->attr("IX") == rix) { target->children.erase(it); break; }
+            }
+            continue;
+        }
+        bool rel = row.attr("T").rfind("Rel", 0) == 0;
         bool replaced = false;
         for (XmlNode& mr : target->children) {
             if (mr.tag != "Row" || mr.attr("IX") != row.attr("IX")) continue;
             for (const XmlNode& c : row.children) {
                 if (c.tag != "Cell") continue;
-                XmlNode copy = c;
-                // 页面坐标 → 母版坐标（后续统一按母版尺寸缩放）
-                bool rel = row.attr("T").rfind("Rel", 0) == 0;
-                if (!rel && (c.attr("N") == "X" || c.attr("N") == "Y" ||
-                             c.attr("N") == "A" || c.attr("N") == "B" ||
-                             c.attr("N") == "C" || c.attr("N") == "D")) {
-                    double v = P2D(c.attr("V"), 0);
-                    v *= (c.attr("N") == "Y" || c.attr("N") == "B" || c.attr("N") == "D") ? my : mx;
-                    std::string sv = std::to_string(v);
-                    bool setV = false;
-                    for (auto& kv : copy.attrs) {
-                        if (kv.first == "V") { kv.second = sv; setV = true; break; }
-                    }
-                    if (!setV) copy.attrs.push_back({"V", sv});
-                }
+                XmlNode copy = toMaster(c, rel);
                 bool rc = false;
                 for (XmlNode& mc : mr.children) {
                     if (mc.tag == "Cell" && mc.attr("N") == c.attr("N")) { mc = copy; rc = true; break; }
@@ -426,7 +500,16 @@ void MergeGeometrySection(XmlNode& out, const XmlNode& pageSec, double mx, doubl
             replaced = true;
             break;
         }
-        if (!replaced) target->children.push_back(row);
+        if (!replaced) {
+            // 页面形状比母版多出来的行（母版里没有同一个 IX）：同样要先换算成母版坐标。
+            // 直接原样追加会让这一行带着页面尺寸被当成母版值再缩放一次，
+            // 连接线最后一个拐点会飞出去（被画成斜线）
+            XmlNode rowCopy = row;
+            for (XmlNode& c : rowCopy.children) {
+                if (c.tag == "Cell") c = toMaster(c, rel);
+            }
+            target->children.push_back(rowCopy);
+        }
     }
     for (const XmlNode& c : pageSec.children) {
         if (c.tag != "Cell") continue;
@@ -441,8 +524,9 @@ void MergeGeometrySection(XmlNode& out, const XmlNode& pageSec, double mx, doubl
 // 页面形状覆盖母版同名单元格/段落/字符/文本，其余沿用母版
 XmlNode MergeMasterShape(const XmlNode& master, const XmlNode& page, double mw, double mh, double pw, double ph) {
     XmlNode out = master;
-    double mx = (pw > 0 && mw > 0) ? mw / pw : 1.0;  // 页面单位 → 母版单位
-    double my = (ph > 0 && mh > 0) ? mh / ph : 1.0;
+    // 页面单位 → 母版单位（宽高都带符号：母版与实例反向时坐标同时被镜像）
+    double mx = (pw != 0 && mw != 0) ? mw / pw : 1.0;
+    double my = (ph != 0 && mh != 0) ? mh / ph : 1.0;
     for (const XmlNode& c : page.children) {
         if (c.tag == "Cell") {
             bool replaced = false;
@@ -490,28 +574,41 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
                          const std::map<int, std::string>& palette, const StyleMap& styles,
                          const std::map<int, std::string>& layerByIndex, std::vector<std::string>& warnings,
                          const std::string& pageName, const MasterMap& masters) {
-    // 页面形状自身宽高（母版几何要缩放到这个尺寸）
+    // 页面形状自身宽高：真实 Visio 文件常省略 Width/Height（F="Inh" 由母版继承），
+    // 1-D 形状反向时又会写成负值，内部模型统一存正值
     std::map<std::string, std::string> pageCells = ReadCells(sh);
-    double wIn = std::max(0.001, CellNum(sh, pageCells, styles, "Width", 0.01));
-    double hIn = std::max(0.001, CellNum(sh, pageCells, styles, "Height", 0.01));
 
     // 母版继承：几何/字符/线条来自 Master，Pin/宽高等由页面形状覆盖
-    const XmlNode* srcPtr = &sh;
-    XmlNode merged;
     int masterId = static_cast<int>(P2D(sh.attr("Master"), -1));
     bool masterMissing = false;
     double masterW = 0, masterH = 0;
+    const XmlNode* masterShape = nullptr;
     if (masterId >= 0) {
         auto mit = masters.find(masterId);
         if (mit != masters.end()) {
-            std::map<std::string, std::string> mcells = ReadCells(mit->second);
-            masterW = std::max(0.001, CellNum(mit->second, mcells, styles, "Width", 0.01));
-            masterH = std::max(0.001, CellNum(mit->second, mcells, styles, "Height", 0.01));
-            merged = MergeMasterShape(mit->second, sh, masterW, masterH, wIn, hIn);
-            srcPtr = &merged;
+            masterShape = &mit->second;
+            std::map<std::string, std::string> mcells = ReadCells(*masterShape);
+            masterW = CellNum(*masterShape, mcells, styles, "Width", 0.01);
+            masterH = CellNum(*masterShape, mcells, styles, "Height", 0.01);
         } else {
             masterMissing = true;
         }
+    }
+
+    // 实例尺寸：先取页面形状自带的，缺失时回退到母版尺寸；
+    // 宽高都保留符号（1-D 形状反向时为负），母版几何与实例几何的坐标换算需要符号
+    double wRaw = CellNum(sh, pageCells, styles, "Width", 0);
+    double hRaw = CellNum(sh, pageCells, styles, "Height", 0);
+    if (std::fabs(wRaw) <= 0) wRaw = masterW;
+    if (std::fabs(hRaw) <= 0) hRaw = masterH;
+    double wIn = std::max(0.001, std::fabs(wRaw));
+    double hIn = std::max(0.001, std::fabs(hRaw));
+
+    const XmlNode* srcPtr = &sh;
+    XmlNode merged;
+    if (masterShape) {
+        merged = MergeMasterShape(*masterShape, sh, masterW, masterH, wRaw, hRaw);
+        srcPtr = &merged;
     }
     const XmlNode& src = *srcPtr;
 
@@ -520,29 +617,60 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
     double pinY = CellNum(src, cells, styles, "PinY", 0);
     double vAngle = CellNum(src, cells, styles, "Angle", 0);
 
-    // 母版几何按母版自身宽高解析，再缩放到页面形状的宽高
+    // 引脚裁切点（LocPin）：页面形状缺省时按母版比例继承（母版值以母版尺寸为单位），
+    // 再缺省取包围盒中心——假定 LocPin 居中会让拐角定位的形状整体偏移
+    auto locPin = [&](const char* cell, double fallback, double size, double masterSize) {
+        auto pit = pageCells.find(cell);
+        if (pit != pageCells.end() && !pit->second.empty()) return P2D(pit->second, fallback);
+        auto mit = cells.find(cell);
+        if (mit != cells.end() && !mit->second.empty() && masterSize != 0)
+            return P2D(mit->second, fallback) * size / masterSize;
+        return fallback;
+    };
+    double locX = locPin("LocPinX", wRaw / 2, wRaw, masterW);
+    double locY = locPin("LocPinY", hRaw / 2, hRaw, masterH);
+    // 1-D 形状反向时宽高为负，LocPin 也按负坐标系存储；内部统一用正值包围盒，
+    // 这里把定位点镜像到正值坐标系（locX' = locX - W），否则包围盒会整体偏一个宽/高
+    if (wRaw < 0) locX -= wRaw;
+    if (hRaw < 0) locY -= hRaw;
+
+    // 母版几何按母版自身宽高解析，再按宽高比缩放到页面形状；
+    // 缩放系数带符号，母版与实例的反向（负宽高）不一致时坐标会被正确镜像
     GeometryInfo geo;
-    if (masterW > 0 && masterH > 0) {
+    if (masterShape && masterW != 0 && masterH != 0) {
         geo = ReadGeometry(src, masterW, masterH);
-        double sx = wIn / masterW, sy = hIn / masterH;
+        double sx = wRaw / masterW, sy = hRaw / masterH;
         for (auto& ring : geo.rings) {
             for (Pt& p : ring) { p.x *= sx; p.y *= sy; }
         }
     } else {
-        geo = ReadGeometry(src, wIn, hIn);
+        geo = ReadGeometry(src, wRaw, hRaw);
     }
 
     // 内部模型：x/y/w/h 为未旋转包围盒，旋转围绕中心（与编辑器渲染一致）
-    Pt center = ToPage(parent, {pinX, pinY});
+    // Visio 绕引脚点（LocPin）旋转：包围盒中心 = 引脚点 + 旋转后的中心偏移，
+    // LocPin 居中时就是引脚点本身
     double totalAngle = parent.angle + vAngle;
+    double cosV = std::cos(vAngle), sinV = std::sin(vAngle);
     double wPx = std::max(0.5, wIn * kPxPerInch);
     double hPx = std::max(0.5, hIn * kPxPerInch);
+    double dcx = wIn / 2 - locX, dcy = hIn / 2 - locY;
+    Pt center = ToPage(parent, {pinX + dcx * cosV - dcy * sinV, pinY + dcx * sinV + dcy * cosV});
     double xPx = (center.x - wIn / 2) * kPxPerInch;
     double yPx = pageH - (center.y + hIn / 2) * kPxPerInch;
-    Pt localOrigin{center.x - wIn / 2, center.y - hIn / 2};
+    // 几何局部坐标（原点在形状左下角）→ 先绕自身原点旋转，再随父级变换到页面
+    // 反向（负宽高）的 1-D 形状，几何坐标也按负坐标系存储，需与 LocPin 一样先镜像回
+    // 正值坐标系；否则所有拐点会整体错开一个宽/高，连接线被拉成斜线
+    auto geomPt = [&](const Pt& p) {
+        Pt q = p;
+        if (wRaw < 0) q.x -= wRaw;
+        if (hRaw < 0) q.y -= hRaw;
+        return q;
+    };
     auto geomToPage = [&](const Pt& p) {
-        double c = std::cos(totalAngle), s = std::sin(totalAngle);
-        return Pt{localOrigin.x + p.x * c - p.y * s, localOrigin.y + p.x * s + p.y * c};
+        Pt q = geomPt(p);
+        Pt lp{pinX - locX + q.x * cosV - q.y * sinV, pinY - locY + q.x * sinV + q.y * cosV};
+        return ToPage(parent, lp);
     };
 
     std::string text;
@@ -572,6 +700,18 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
     std::string lineColor = lineOff ? "transparent" : ResolveColor(ResolveCell(src, cells, styles, "LineColor"), palette);
     if (!lineOff && (lineColor.empty() || lineColor[0] != '#')) lineColor = "#000000";
     double lineWidth = CellNum(src, cells, styles, "LineWeight", 0.0104) * kPxPerInch;
+
+    // 线型：Visio 用 LinePattern 表达虚线（2=虚线 3=点线 4=点划线 5=双点划线，
+    // 更大的序号是自定义图案）。内部存 dash 名称供渲染器画虚线，同时保留原始
+    // 序号，保存时按原值写回，避免往返丢线型
+    if (!lineOff) {
+        std::string lpRaw = ResolveCell(src, cells, styles, "LinePattern");
+        int lp = lpRaw.empty() ? 1 : static_cast<int>(P2D(lpRaw, 1));
+        if (lp > 1) {
+            style["dash"] = lp == 3 ? "dot" : (lp == 4 ? "dashDot" : (lp == 5 ? "dashDotDot" : "dash"));
+            style["linePattern"] = lp;
+        }
+    }
 
     if (kind != "connector") style["fill"] = fill;
     style["line"] = lineColor;
@@ -635,14 +775,13 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
         bool hasBegin = cells.count("BeginX") && cells.count("BeginY");
         bool hasEnd = cells.count("EndX") && cells.count("EndY");
         Pt A{xPx, yPx + hPx}, B{xPx + wPx, yPx};
-        if (hasBegin) {
-            A.x = P2D(cells["BeginX"]) * kPxPerInch;
-            A.y = pageH - P2D(cells["BeginY"]) * kPxPerInch;
-        }
-        if (hasEnd) {
-            B.x = P2D(cells["EndX"]) * kPxPerInch;
-            B.y = pageH - P2D(cells["EndY"]) * kPxPerInch;
-        }
+        // 1-D 形状的 Begin/End 存在父级（页面或组合）本地坐标系里，需随父级变换到页面
+        auto toPagePx = [&](const std::string& xs, const std::string& ys) {
+            Pt q = ToPage(parent, {P2D(xs), P2D(ys)});
+            return Pt{q.x * kPxPerInch, pageH - q.y * kPxPerInch};
+        };
+        if (hasBegin) A = toPagePx(cells["BeginX"], cells["BeginY"]);
+        if (hasEnd) B = toPagePx(cells["EndX"], cells["EndY"]);
         if (userType == "connector") {
             std::string bx = UserValue(sh, "VXBeginX"), by = UserValue(sh, "VXBeginY");
             std::string ex = UserValue(sh, "VXEndX"), ey = UserValue(sh, "VXEndY");
@@ -665,12 +804,16 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
         }
         shape["begin"] = {{"x", A.x}, {"y", A.y}};
         shape["end"] = {{"x", B.x}, {"y", B.y}};
-        // 原生 1-D 连接线默认按直角折线绘制；Visioxure 自身文件沿用存储的 route
+        // 走线：Visio 把连接线的实际拐点写在自己 1-D 的 Geometry 段里
+        //（MoveTo + 若干 LineTo）。只按 Begin/End 重新正交布线会丢掉拐点位置，
+        // 引导段跑到另一端甚至凭空多出一折，因此原生文件直接用几何点做 manual；
+        // 几何只有两点说明是直线连接，也不能套正交折线。Visioxure 自身文件沿用存储的 route
         std::string vxRoute = UserValue(sh, "VXRoute");
-        std::string route = (hasBegin && hasEnd)
-                                ? "ortho"
-                                : ((geo.rings.empty() || geo.rings[0].size() <= 2) ? "straight" : "ortho");
+        std::string route;
         if (!vxRoute.empty()) route = vxRoute;
+        else if (!geo.rings.empty() && geo.rings.front().size() >= 3) route = "manual";
+        else if (!geo.rings.empty()) route = "straight";
+        else route = (hasBegin && hasEnd) ? "ortho" : "straight";
         shape["route"] = route;
         if (route == "manual" && !geo.rings.empty()) {
             nlohmann::json pts = nlohmann::json::array();
@@ -709,7 +852,8 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
         nlohmann::json subpaths = nlohmann::json::array();
         for (const auto& ring : geo.rings) {
             nlohmann::json sp = nlohmann::json::array();
-            for (const Pt& p : ring) {
+            for (const Pt& p0 : ring) {
+                Pt p = geomPt(p0);  // 负宽高（反向）形状先镜像回正值坐标系
                 sp.push_back({{"x", p.x * kPxPerInch - wPx / 2}, {"y", hPx / 2 - p.y * kPxPerInch}});
             }
             subpaths.push_back(sp);
@@ -1037,13 +1181,13 @@ nlohmann::json ParsePage(const XmlNode& pageRoot, const std::string& pageName, d
             if (!conn || !target || conn->value("type", "") != "connector") continue;
             std::string fromCell = c->attr("FromCell");
             const char* which = fromCell.rfind("Begin", 0) == 0 ? "begin" : "end";
+            double px = (*conn)[which]["x"].get<double>(), py = (*conn)[which]["y"].get<double>();
+            // 只把“贴在边中点”的端点转成内部锚点；边上的自定义连接点保留原坐标，
+            // 否则会在移动时整条线跳到错误的一边
+            int anchor = 0;
+            if (!EdgeAnchorOf(*target, px, py, anchor)) continue;
             if (!conn->contains("glue")) (*conn)["glue"] = nlohmann::json::object();
-            double px = (*conn)["begin"]["x"].get<double>(), py = (*conn)["begin"]["y"].get<double>();
-            if (std::string(which) == "end") {
-                px = (*conn)["end"]["x"].get<double>();
-                py = (*conn)["end"]["y"].get<double>();
-            }
-            (*conn)["glue"][which] = toId + ":" + std::to_string(NearestAnchor(*target, {px, py}));
+            (*conn)["glue"][which] = toId + ":" + std::to_string(anchor);
         }
     }
 

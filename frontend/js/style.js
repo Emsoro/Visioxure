@@ -158,12 +158,13 @@
     { v: "open", t: "开口箭头" },
     { v: "triangle", t: "空心三角" },
     { v: "dot", t: "圆点" },
-    { v: "diamond", t: "菱形" },
-    { v: "bar", t: "竖线" },
+    { v: "diamond", t: "空心菱形" },
+    { v: "square", t: "实心方块" },
+    { v: "bar", t: "斜线" },
   ];
 
   // 内部箭头形状名 → Visio 箭头类型号（保存时写回 BeginArrow/EndArrow）
-  const ARROW_TYPES = { none: 0, open: 1, arrow: 4, triangle: 14, dot: 10, diamond: 22, bar: 9 };
+  const ARROW_TYPES = { none: 0, open: 1, arrow: 4, triangle: 14, dot: 10, diamond: 22, square: 11, bar: 9 };
   // Visio 箭头尺寸级别 0~6（2 为默认）
   const ARROW_SIZE_OPTS = [
     { v: 0, t: "最小" },

@@ -396,6 +396,31 @@ void RunBasicScenarios() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // 导出解析结果：vsdx_test --json <in.vsdx> <out.json>（供前端预览/对比用）
+    if (argc >= 4 && std::string(argv[1]) == "--json") {
+        std::ifstream in(argv[2], std::ios::binary);
+        if (!in) {
+            std::printf("JSON FAIL: cannot open %s\n", argv[2]);
+            return 1;
+        }
+        std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        json doc;
+        std::vector<std::string> warnings;
+        std::string err;
+        if (!vsx::ParseVsdxBytes(bytes, doc, warnings, err)) {
+            std::printf("JSON FAIL: %s\n", err.c_str());
+            return 1;
+        }
+        std::ofstream out(argv[3], std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::printf("JSON FAIL: cannot write %s\n", argv[3]);
+            return 1;
+        }
+        out << doc.dump();
+        std::printf("wrote %s (%zu bytes, %zu warnings)\n", argv[3], doc.dump().size(), warnings.size());
+        return 0;
+    }
+
     // 外部文件读取回归：vsdx_test --read <path>
     if (argc >= 3 && std::string(argv[1]) == "--read") {
         std::ifstream in(argv[2], std::ios::binary);

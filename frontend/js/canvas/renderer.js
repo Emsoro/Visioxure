@@ -6,7 +6,9 @@
   let canvas = null, ctx = null, host = null; // host = #canvas-scroll，用于取容器尺寸
 
   function fontString(f) {
-    return `${f.bold ? "bold " : ""}${f.size}px '${f.family}', 'Microsoft YaHei', sans-serif`;
+    // 回退链：Visio 常用 Liberation Sans/Arial，本机没装时先退到 Arial 再退 CJK 字体；
+    // 把中文字体排在前面会让拉丁字母的字距明显偏宽，文本行宽/换行位置跟不上 Visio
+    return `${f.bold ? "bold " : ""}${f.size}px '${f.family}', Arial, Helvetica, 'Microsoft YaHei', sans-serif`;
   }
 
   // 圆角矩形路径：老版本 WebView2 没有 ctx.roundRect，退化为手写路径
@@ -29,6 +31,22 @@
   // 屏幕最小描边宽度：缩小视图时 1.5px 线条会淡到看不见
   function strokeWidth(w, zoom) {
     return Math.max(w || 0, 1 / (zoom || 1));
+  }
+
+  // 虚线样式 → Canvas 虚线数组：数值是世界单位，按线宽缩放（与 Visio 线型的观感一致）。
+  // 对应 reader 的 style.dash（Visio LinePattern 2/3/4/5 及自定义图案）
+  const DASH_PATTERNS = {
+    dash: [4, 3],
+    dot: [1.2, 2.4],
+    dashDot: [4, 2.4, 1.2, 2.4],
+    dashDotDot: [4, 2.4, 1.2, 2.4, 1.2, 2.4],
+  };
+  function applyDash(c, st, lw) {
+    const pat = st && st.dash ? DASH_PATTERNS[st.dash] : null;
+    if (!pat) return false;
+    const k = Math.max(1, lw || 1);
+    c.setLineDash(pat.map((v) => v * k));
+    return true;
   }
 
   // 文本按宽度断行（逐字符，CJK 友好；P1 先支持单段落）
@@ -58,6 +76,9 @@
     c.lineWidth = lw;
     c.lineJoin = "round";
     c.lineCap = "round";
+    // 虚线连接线（Visio LinePattern）：虚线用平头，否则圆头会把空隙补上
+    const dashed = applyDash(c, st, lw);
+    if (dashed) c.lineCap = "butt";
 
     // 箭头方向取端部切线：折线用相邻点，曲线用控制点
     let beginFrom = pts[1], endFrom = pts[pts.length - 2];
@@ -78,6 +99,7 @@
       c.stroke();
     }
 
+    if (dashed) c.setLineDash([]);
     drawArrow(c, endFrom, pts[pts.length - 1], arrowKind(st.arrowEndKind, st.arrowEnd !== false), lw, st.arrowEndSize);
     drawArrow(c, beginFrom, pts[0], arrowKind(st.arrowBeginKind, !!st.arrowBegin), lw, st.arrowBeginSize);
 
@@ -108,7 +130,7 @@
   }
 
   // 箭头形状：旧布尔值（true/false）与新 kind 字符统一归一
-  // kind：none / arrow（实心）/ open（开口）/ triangle（空心三角）/ dot（圆点）/ diamond（菱形）/ bar（竖线）
+  // kind：none / arrow（实心）/ open（开口）/ triangle（空心三角）/ dot（圆点）/ diamond（菱形）/ square（方块）/ bar（斜线）
   function arrowKind(kind, flag) {
     if (typeof kind === "string" && kind) return kind;
     return flag ? "arrow" : "none";
@@ -121,61 +143,80 @@
     return ARROW_SIZE_SCALE[Math.max(0, Math.min(6, Math.round(level)))];
   }
 
-  // 在 tip 处按 from→tip 方向画箭头
+  // 各类型箭头字形（长 / 半宽，单位＝字形单位），取自 Visio SVG 导出里的 lendN 定义：
+  // 开口箭头 1×1、实心箭头 2×1、空心三角 3×1、斜线 1×1、圆点/方块 1.5、空心菱形 4.5×1.125。
+  // 统一按一个尺寸画会让开口箭头、圆点、方块明显偏大，三角形偏小
+  const ARROW_GLYPH = {
+    open: { len: 1, half: 1 },
+    arrow: { len: 2, half: 1 },
+    triangle: { len: 3, half: 1 },
+    bar: { len: 1, half: 1 },
+    dot: { len: 1.5, half: 0.75 },
+    square: { len: 1.5, half: 0.75 },
+    diamond: { len: 4.5, half: 1.125 },
+  };
+
+  // 在 tip 处按 from→tip 方向画箭头（局部坐标：+x 朝箭头尖，箭头体向 -x 延伸）
   function drawArrow(c, from, tip, kind, lw, sizeLevel) {
     if (!kind || kind === "none") return;
     const dx = tip.x - from.x, dy = tip.y - from.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 0.001) return;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.001) return;
     const ang = Math.atan2(dy, dx);
-    const size = (7 + Math.max(1, lw) * 2.2) * arrowScale(sizeLevel);
+    // 每字形单位 ≈ (线宽 + 2.5) px：线粗时箭头略大，但远不随线宽成比例膨胀
+    const u = (Math.max(0.5, lw) + 2.5) * arrowScale(sizeLevel);
+    const g = ARROW_GLYPH[kind] || ARROW_GLYPH.arrow;
+    const L = u * g.len, H = u * g.half;
     const color = c.strokeStyle;
     c.save();
+    c.translate(tip.x, tip.y);
+    c.rotate(ang);
     c.lineWidth = Math.max(1.2, lw);
     c.lineJoin = "miter";
-    if (kind === "open") {
-      const a1 = ang + Math.PI * 0.8, a2 = ang - Math.PI * 0.8;
-      c.strokeStyle = color;
+    c.lineCap = "butt";
+    if (kind === "dot") {
       c.beginPath();
-      c.moveTo(tip.x + Math.cos(a1) * size, tip.y + Math.sin(a1) * size);
-      c.lineTo(tip.x, tip.y);
-      c.lineTo(tip.x + Math.cos(a2) * size, tip.y + Math.sin(a2) * size);
-      c.stroke();
-    } else if (kind === "dot") {
-      c.beginPath();
-      c.arc(tip.x, tip.y, size * 0.45, 0, Math.PI * 2);
+      c.arc(0, 0, H, 0, Math.PI * 2);
       c.fillStyle = color;
       c.fill();
-    } else if (kind === "diamond") {
-      const half = size * 0.95, wing = size * 0.34;
-      const nx = -Math.sin(ang) * wing, ny = Math.cos(ang) * wing;
-      const mx = tip.x - Math.cos(ang) * half, my = tip.y - Math.sin(ang) * half;
-      const bx = tip.x - Math.cos(ang) * half * 2, by = tip.y - Math.sin(ang) * half * 2;
+    } else if (kind === "square") {
+      // Visio 类型 11：实心方块（以端点为心，随线段方向旋转）
       c.beginPath();
-      c.moveTo(tip.x, tip.y);
-      c.lineTo(mx + nx, my + ny);
-      c.lineTo(bx, by);
-      c.lineTo(mx - nx, my - ny);
-      c.closePath();
+      c.rect(-H, -H, H * 2, H * 2);
       c.fillStyle = color;
       c.fill();
     } else if (kind === "bar") {
-      const nx = -Math.sin(ang) * size * 0.72, ny = Math.cos(ang) * size * 0.72;
+      // Visio 类型 9：45° 斜线，横跨线端
+      c.beginPath();
+      c.moveTo(H, -H);
+      c.lineTo(-H, H);
       c.strokeStyle = color;
-      c.beginPath();
-      c.moveTo(tip.x - nx, tip.y - ny);
-      c.lineTo(tip.x + nx, tip.y + ny);
       c.stroke();
-    } else {
-      const a1 = ang + Math.PI * 0.86, a2 = ang - Math.PI * 0.86;
+    } else if (kind === "diamond") {
+      // Visio 类型 22：空心菱形（只描边）
       c.beginPath();
-      c.moveTo(tip.x, tip.y);
-      c.lineTo(tip.x + Math.cos(a1) * size, tip.y + Math.sin(a1) * size);
-      c.lineTo(tip.x + Math.cos(a2) * size, tip.y + Math.sin(a2) * size);
+      c.moveTo(0, 0);
+      c.lineTo(-L / 2, -H);
+      c.lineTo(-L, 0);
+      c.lineTo(-L / 2, H);
       c.closePath();
       c.strokeStyle = color;
       c.stroke();
-      if (kind !== "triangle") { c.fillStyle = color; c.fill(); }
+    } else if (kind === "open") {
+      c.beginPath();
+      c.moveTo(-L, -H);
+      c.lineTo(0, 0);
+      c.lineTo(-L, H);
+      c.strokeStyle = color;
+      c.stroke();
+    } else {
+      c.beginPath();
+      c.moveTo(0, 0);
+      c.lineTo(-L, -H);
+      c.lineTo(-L, H);
+      c.closePath();
+      if (kind === "triangle") { c.strokeStyle = color; c.stroke(); }
+      else { c.fillStyle = color; c.fill(); }
     }
     c.restore();
   }
@@ -236,17 +277,27 @@
       // 子路径为局部坐标（原点=包围盒中心）
       const subpaths = (s.path && s.path.subpaths) || [];
       for (const ring of subpaths) {
+        if (!ring.length) continue;
         for (let i = 0; i < ring.length; i++) {
           if (i) c.lineTo(ring[i].x, ring[i].y); else c.moveTo(ring[i].x, ring[i].y);
         }
-        c.closePath();
+        // 开放折线（例：虚线引导线）不能闭合：闭合会凭空多出一条从终点回到起点的斜线。
+        // 只有首尾重合或形状要填充时才闭合子路径
+        const a = ring[0], b = ring[ring.length - 1];
+        if (hasFill || Math.hypot(a.x - b.x, a.y - b.y) < 0.01) c.closePath();
       }
     } else {
       const r = Math.min(st.cornerRadius || 0, hw, hh);
       roundRectPath(c, -hw, -hh, s.w, s.h, r);
     }
     if (hasFill) { c.fillStyle = st.fill; c.fill(s.type === "path" && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd"); }
-    if (hasLine) { c.strokeStyle = st.line; c.lineWidth = strokeWidth(st.lineWidth, vp.zoom); c.stroke(); }
+    if (hasLine) {
+      c.strokeStyle = st.line;
+      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom);
+      const dashed = applyDash(c, st, c.lineWidth);
+      c.stroke();
+      if (dashed) c.setLineDash([]);
+    }
 
     // 文本
     if (text) {

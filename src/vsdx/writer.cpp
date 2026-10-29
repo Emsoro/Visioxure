@@ -106,6 +106,7 @@ int ArrowTypeOfKind(const std::string& kind) {
     if (kind == "triangle") return 14;
     if (kind == "dot") return 10;
     if (kind == "diamond") return 22;
+    if (kind == "square") return 11;
     if (kind == "bar") return 9;
     return 4;
 }
@@ -475,8 +476,19 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     } else {
         out += Cell("FillPattern", "0");
     }
+    // 线型：dash → Visio LinePattern 序号。优先用读取时保留的原始序号，保证往返一致
+    int linePattern = 1;
+    {
+        std::string dash = JStr(st, "dash");
+        if (!dash.empty()) {
+            linePattern = st.value("linePattern", 0);
+            if (linePattern < 2)
+                linePattern = dash == "dot" ? 3 : (dash == "dashDot" ? 4 : (dash == "dashDotDot" ? 5 : 2));
+        }
+    }
     if (hasLine) {
-        out += Cell("LinePattern", "1") + Cell("LineColor", line) + Cell("LineWeight", Num(lineWidth / kPxPerInch));
+        out += Cell("LinePattern", std::to_string(linePattern)) + Cell("LineColor", line) +
+               Cell("LineWeight", Num(lineWidth / kPxPerInch));
         if (opacity < 0.999) out += Cell("LineColorTrans", Num(1.0 - opacity));
     } else {
         out += Cell("LinePattern", "0");
