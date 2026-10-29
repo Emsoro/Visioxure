@@ -33,11 +33,14 @@
   function buildPath2D(s) {
     const p2d = new Path2D();
     const subpaths = (s.path && s.path.subpaths) || [];
-    for (const ring of subpaths) {
+    const closedFlags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+    for (let k = 0; k < subpaths.length; k++) {
+      const ring = subpaths[k];
       for (let i = 0; i < ring.length; i++) {
         if (i) p2d.lineTo(ring[i].x, ring[i].y); else p2d.moveTo(ring[i].x, ring[i].y);
       }
-      p2d.closePath();
+      // 与 renderer 同口径：默认闭合，只有显式声明开放的折线不闭合
+      if (!closedFlags || closedFlags[k] !== false) p2d.closePath();
     }
     return p2d;
   }

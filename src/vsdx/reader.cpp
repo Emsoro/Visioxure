@@ -850,15 +850,32 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
         if (!glue.empty()) shape["glue"] = glue;
     } else if (kind == "path") {
         nlohmann::json subpaths = nlohmann::json::array();
+        nlohmann::json closed = nlohmann::json::array();
+        // 闭合与否必须显式告诉前端：Visio 的纯线条几何（如虚线引导线）首尾不重合，
+        // 不能闭合；但前端若反过来按「有填充才闭合」猜，
+        // 形状库那种「透明填充 + 描边」的闭合多边形就会缺一条闭合边
+        const bool fillOn = style.contains("fill") && style["fill"] != "transparent";
+        // Visioxure 自己的文件里开合已经由 writer 如实写出行（开放折线不补回原点的行），
+        // 直接按首尾是否重合判定即可；只有外来 Visio 文件才需要「有填充则隐式闭合」兼容
+        const bool own = !UserValue(sh, "VXId").empty();
+        bool anyOpen = false;
         for (const auto& ring : geo.rings) {
             nlohmann::json sp = nlohmann::json::array();
             for (const Pt& p0 : ring) {
                 Pt p = geomPt(p0);  // 负宽高（反向）形状先镜像回正值坐标系
                 sp.push_back({{"x", p.x * kPxPerInch - wPx / 2}, {"y", hPx / 2 - p.y * kPxPerInch}});
             }
+            const bool coincide = ring.size() >= 2 &&
+                std::fabs(ring.front().x - ring.back().x) < 1e-6 &&
+                std::fabs(ring.front().y - ring.back().y) < 1e-6;
+            const bool ringClosed = coincide || (own ? false : fillOn);
+            closed.push_back(ringClosed);
+            if (!ringClosed) anyOpen = true;
             subpaths.push_back(sp);
         }
         shape["path"] = {{"subpaths", subpaths}, {"fillRule", "evenodd"}};
+        // 全部闭合时不写 closed，保持 JSON 精简且与旧文件兼容（前端默认闭合）
+        if (anyOpen) shape["path"]["closed"] = closed;
     }
 
     if (cells.count("LayerMember")) {

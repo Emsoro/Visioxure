@@ -590,9 +590,13 @@
     if (s.type === "ellipse") {
       c.ellipse(0, 0, (s.w || 1) / 2, (s.h || 1) / 2, 0, 0, Math.PI * 2);
     } else if (s.type === "path") {
-      for (const ring of (s.path && s.path.subpaths) || []) {
+      // 与 renderer 同口径：默认闭合，只有显式声明 path.closed[i] === false 的开放折线不闭合
+      const flags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+      const subs = (s.path && s.path.subpaths) || [];
+      for (let k = 0; k < subs.length; k++) {
+        const ring = subs[k];
         ring.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); });
-        c.closePath();
+        if (!flags || flags[k] !== false) c.closePath();
       }
     } else {
       const r = Math.min(st.cornerRadius || 0, (s.w || 0) / 2, (s.h || 0) / 2);

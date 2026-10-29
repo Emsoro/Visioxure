@@ -390,12 +390,17 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
                        Cell("C", "0") + Cell("D", "0") + "</Row></Section>";
         } else if (type == "path") {
             std::vector<std::vector<Pt>> rings;  // Visio 局部坐标（左下原点）
+            std::vector<bool> ringClosed;        // 与 rings 同序：false = 开放折线，不补回原点的闭合行
             auto pathIt = s.find("path");
             if (pathIt != s.end() && pathIt->is_object()) {
                 auto subIt = pathIt->find("subpaths");
+                auto clIt = pathIt->find("closed");
+                const nlohmann::json* closedArr =
+                    (clIt != pathIt->end() && clIt->is_array()) ? &*clIt : nullptr;
                 if (subIt != pathIt->end() && subIt->is_array()) {
+                    size_t si = 0;
                     for (const auto& ring : *subIt) {
-                        if (!ring.is_array() || ring.size() < 2) continue;
+                        if (!ring.is_array() || ring.size() < 2) { ++si; continue; }
                         std::vector<Pt> pts;
                         for (const auto& p : ring) {
                             if (!p.is_object()) continue;
@@ -404,7 +409,16 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
                             q.y = (ph / 2 - JNum(p, "y", 0)) / kPxPerInch;
                             pts.push_back(q);
                         }
-                        if (pts.size() >= 2) rings.push_back(std::move(pts));
+                        if (pts.size() >= 2) {
+                            bool cl = true;   // 缺字段按闭合处理（旧文件兼容）
+                            if (closedArr && si < closedArr->size()) {
+                                const nlohmann::json& cj = (*closedArr)[si];
+                                cl = !cj.is_boolean() || cj.get<bool>();
+                            }
+                            rings.push_back(std::move(pts));
+                            ringClosed.push_back(cl);
+                        }
+                        ++si;
                     }
                 }
             }
@@ -428,8 +442,13 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
                     geometry += "<Row T=\"LineTo\" IX=\"" + std::to_string(row++) + "\">" +
                                 Cell("X", Num(rings[ri][k].x)) + Cell("Y", Num(rings[ri][k].y)) + "</Row>";
                 }
-                geometry += "<Row T=\"LineTo\" IX=\"" + std::to_string(row++) + "\">" +
-                            Cell("X", Num(rings[ri][0].x)) + Cell("Y", Num(rings[ri][0].y)) + "</Row>";
+                // 闭合环补一行回到起点；开放折线（path.closed=false）不能补，
+                // 否则 Visio 里会多出一条从终点回到起点的斜线
+                const bool closeRing = ri < ringClosed.size() ? ringClosed[ri] : true;
+                if (closeRing) {
+                    geometry += "<Row T=\"LineTo\" IX=\"" + std::to_string(row++) + "\">" +
+                                Cell("X", Num(rings[ri][0].x)) + Cell("Y", Num(rings[ri][0].y)) + "</Row>";
+                }
                 geometry += "</Section>";
             }
             if (geometry.empty()) {

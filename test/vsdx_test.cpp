@@ -112,6 +112,19 @@ json MakeDoc() {
                                   {"style", style("#7B68EE", "#5646B0")},
                                   {"path", {{"fillRule", "evenodd"}, {"subpaths", subpaths}}}});
 
+    // 开放折线：path.closed=false，writer 不得补一行回到起点，
+    // 否则 Visio 与重新导入都会多出一条闭合斜线
+    json openRing = json::array();
+    openRing.push_back(json{{"x", -50}, {"y", -30}});
+    openRing.push_back(json{{"x", 50}, {"y", -30}});
+    openRing.push_back(json{{"x", 0}, {"y", 30}});
+    page["shapes"].push_back(json{{"id", "s9"}, {"type", "path"}, {"x", 300}, {"y", 420}, {"w", 100},
+                                  {"h", 60}, {"angle", 0}, {"z", 9}, {"layer", "l1"}, {"lock", false},
+                                  {"style", style("transparent", "#39434F")},
+                                  {"path", {{"fillRule", "evenodd"},
+                                            {"subpaths", json::array({openRing})},
+                                            {"closed", json::array({false})}}}});
+
     json connector = {{"id", "s5"},
                       {"type", "connector"},
                       {"x", 0},
@@ -562,6 +575,16 @@ int main(int argc, char** argv) {
     json p4 = FindShape(shapes, "s4");
     Check(!p4.is_null() && p4.value("type", "") == "path", "s4 读回为 path");
     if (!p4.is_null()) Check(p4["path"]["subpaths"].size() == 2, "s4 两个子路径保留（含孔洞）");
+
+    json p9 = FindShape(shapes, "s9");
+    Check(!p9.is_null() && p9.value("type", "") == "path", "s9 读回为 path");
+    if (!p9.is_null()) {
+        Check(p9["path"]["subpaths"].size() == 1 && p9["path"]["subpaths"][0].size() == 3,
+              "s9 开放折线未被补上闭合点（3 点）");
+        Check(p9["path"].contains("closed") && p9["path"]["closed"].is_array() &&
+                  p9["path"]["closed"].size() == 1 && p9["path"]["closed"][0] == false,
+              "s9 开放标记 closed=false 往返保留");
+    }
 
     json c5 = FindShape(shapes, "s5");
     Check(!c5.is_null() && c5.value("type", "") == "connector", "s5 读回为 connector");
