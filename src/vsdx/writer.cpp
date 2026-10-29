@@ -5,6 +5,8 @@
 #include "package.hpp"
 #include "xml.hpp"
 
+#include "version.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -838,7 +840,8 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
             "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" "
             "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">"
-            "<Application>Visioxure</Application><AppVersion>0.1.0</AppVersion></Properties>");
+            "<Application>Visioxure</Application><AppVersion>" + std::string(visioxure::kVersion) +
+                "</AppVersion></Properties>");
 
     std::string bytes = pkg.ToBytes();
     if (bytes.empty()) err = "打包 zip 失败";

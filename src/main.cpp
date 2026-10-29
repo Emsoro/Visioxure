@@ -5,10 +5,12 @@
 #include "tauricpp/app.hpp"
 #include "tauricpp/dialog.hpp"
 
+#include "version.hpp"
 #include "vsdx/reader.hpp"
 #include "vsdx/writer.hpp"
 
 #include <Windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cctype>
@@ -23,7 +25,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = visioxure::kVersion;  // 版本号来自 CMakeLists 的 project(VERSION)
 constexpr size_t kMaxRecent = 10;
 
 std::string ErrorLogPath() {
@@ -172,6 +174,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     bridge.RegisterCommand("app.get_info", [](const json&) -> json {
         return json{{"version", kVersion}, {"name", "Visioxure"}};
+    });
+
+    // 用系统默认浏览器打开链接（菜单栏品牌图标等）：只放行 http/https，
+    // 其余协议（file:/ms-…:）一律拒绝，避免被当成任意命令执行入口
+    bridge.RegisterCommand("app.open_url", [](const json& args) -> json {
+        std::string url = args.value("url", std::string());
+        if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
+            return json{{"success", false}, {"error", "只允许 http/https 链接"}};
+        }
+        std::wstring wurl = Utf8ToWide(url);
+        HINSTANCE r = ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return json{{"success", reinterpret_cast<INT_PTR>(r) > 32}};
     });
 
     // ---------- 文件对话框 ----------

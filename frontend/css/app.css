@@ -35,7 +35,15 @@ body {
   border-bottom: 1px solid var(--chrome-border);
   background: var(--chrome-bg);
 }
-.logo { font-weight: 600; font-size: 13px; color: var(--accent); }
+/* 菜单栏左侧：品牌链接（GitHub / Gitee 图标），点击由后端用系统浏览器打开 */
+.logo { display: flex; align-items: center; gap: 2px; }
+.logo .git-link {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 5px;
+  color: var(--text-dim); cursor: pointer;
+}
+.logo .git-link:hover { background: var(--hover); color: var(--accent); }
+.logo .git-link svg { width: 16px; height: 16px; display: block; }
 .menus { display: flex; gap: 2px; }
 .menu-item { padding: 4px 9px; border-radius: 4px; cursor: default; }
 .menu-item:hover { background: var(--hover); }

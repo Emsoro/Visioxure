@@ -65,6 +65,27 @@ function initTools() {
   });
 }
 
+// ---------- 品牌链接：交给后端用系统浏览器打开（在 WebView 内跳转会顶掉编辑器） ----------
+function initBrandLinks() {
+  const box = $("#brand-links");
+  if (!box) return;
+  box.addEventListener("click", async (e) => {
+    const link = e.target.closest(".git-link");
+    const url = link && link.dataset.url;
+    if (!url) return;
+    if (bridge) {
+      try {
+        const r = await bridge.invoke("app.open_url", { url });
+        if (r && r.success) return;
+      } catch (err) {
+        console.error("app.open_url failed:", err);
+      }
+    }
+    // 浏览器直开（无 Bridge）时的退化路径
+    window.open(url, "_blank", "noopener");
+  });
+}
+
 // ---------- 全局错误上报 ----------
 window.addEventListener("error", (e) => {
   if (bridge) bridge.invoke("log_error", { message: `${e.message} @ ${e.filename}:${e.lineno}` });
@@ -81,5 +102,6 @@ document.addEventListener("DOMContentLoaded", () => {
   VX.FileIO.init();
   initPanelTabs();
   initTools();
+  initBrandLinks();
   initBridge();
 });

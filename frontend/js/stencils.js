@@ -26,8 +26,25 @@
     lineWidth: 1.4,
   };
 
+  // ---------- 交互原型色板（对齐 prototype/ 样图） ----------
+  // 样图语言：白底卡片 + 极细描边 + 深墨蓝主色 + 浅灰骨架占位，
+  // 与基本形状的「灰蓝线框」区分开，插入后即接近成品界面观感。
+  const PR = {
+    line: "#E2E5EA",        // 卡片/列表项描边
+    lineSoft: "#EDEFF3",    // 分隔线（比描边更淡）
+    fieldLine: "#D5D9E1",   // 表单控件/机身描边（略深，保证细线可见）
+    text: "#22252B",        // 主文字
+    textDim: "#6E737D",     // 次要文字/占位文字（白底对比 ≥4.5:1）
+    white: "#FFFFFF",
+    surface: "#F3F4F7",     // 浅灰底：搜索框/标签/选中导航项
+    skeleton: "#E7E9EE",    // 骨架占位块
+    skeletonDeep: "#CBD0DA", // 占位图里的图标/次要色块
+    navy: "#2B2A4C",        // 深墨蓝主色：主按钮/强调卡片
+    navySoft: "#4B4A72",    // 深色卡片上的次级色块
+  };
+
   // ---------- 交互原型：组合构件的局部坐标小工具 ----------
-  const FONT = { family: "Segoe UI", size: 13, color: SK.text, bold: false, align: "center", vAlign: "middle" };
+  const FONT = { family: "Segoe UI", size: 13, color: PR.text, bold: false, align: "center", vAlign: "middle" };
   function font(patch) { return Object.assign({}, FONT, patch || {}); }
   function box(x, y, w, h, style) { return { type: "rect", x, y, w, h, style }; }
   function ellipse(x, y, w, h, style) { return { type: "ellipse", x, y, w, h, style }; }
@@ -41,6 +58,35 @@
     };
   }
 
+  // 线段 → 填充四边形（局部坐标以包围盒中心为原点）：画放大镜柄、关闭叉等细节时
+  // 不必依赖形状旋转，缩略图与画布渲染结果保持一致
+  function seg(x1, y1, x2, y2, t, color) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * t / 2, ny = (dx / len) * t / 2;
+    const x = Math.min(x1, x2) - t / 2, y = Math.min(y1, y2) - t / 2;
+    const w = Math.abs(dx) + t, h = Math.abs(dy) + t;
+    const cx = x + w / 2, cy = y + h / 2;
+    const ring = [
+      { x: x1 + nx, y: y1 + ny }, { x: x2 + nx, y: y2 + ny },
+      { x: x2 - nx, y: y2 - ny }, { x: x1 - nx, y: y1 - ny },
+    ].map((p) => ({ x: p.x - cx, y: p.y - cy }));
+    return {
+      type: "path", x, y, w, h, path: { subpaths: [ring], fillRule: "evenodd" },
+      style: { fill: color, line: "transparent", lineWidth: 0 },
+    };
+  }
+
+  // 下拉箭头：闭合多边形模拟细线「v」形（开放路径会被闭合，不能直接画折线）
+  function chevron(x, y, w, h, color) {
+    const t = Math.max(1.2, h * 0.3);
+    const pts = [
+      { x: -w / 2, y: -h / 2 }, { x: 0, y: h / 2 - t }, { x: w / 2, y: -h / 2 },
+      { x: w / 2, y: -h / 2 + t }, { x: 0, y: h / 2 }, { x: -w / 2, y: -h / 2 + t },
+    ];
+    return poly(pts, x, y, w, h, { fill: color, line: "transparent", lineWidth: 0 });
+  }
+
   const categories = [
     {
       name: "基本形状",
@@ -50,6 +96,7 @@
         { id: "circle", name: "圆形", def: { type: "ellipse", w: 100, h: 100 } },
         { id: "triangle", name: "三角形", def: polyDef([{ x: -60, y: 45 }, { x: 0, y: -45 }, { x: 60, y: 45 }], 120, 90) },
         { id: "trapezoid", name: "梯形", def: polyDef([{ x: -45, y: -35 }, { x: 45, y: -35 }, { x: 60, y: 35 }, { x: -60, y: 35 }], 120, 70) },
+        { id: "diamond", name: "菱形", def: polyDef([{ x: 0, y: -45 }, { x: 60, y: 0 }, { x: 0, y: 45 }, { x: -60, y: 0 }], 120, 90) },
       ],
     },
     {
@@ -66,111 +113,295 @@
           def: polyDef([{ x: -60, y: -10 }, { x: 10, y: -10 }, { x: 10, y: -25 },
             { x: 60, y: 0 }, { x: 10, y: 25 }, { x: 10, y: 10 }, { x: -60, y: 10 }], 120, 50),
         },
+        // 双向箭头：两端带箭头的块状箭头（用于双向流程/数据流）
+        {
+          id: "flow-arrow-double", name: "双向箭头",
+          def: polyDef([{ x: -60, y: 0 }, { x: -20, y: -25 }, { x: -20, y: -10 },
+            { x: 20, y: -10 }, { x: 20, y: -25 }, { x: 60, y: 0 },
+            { x: 20, y: 25 }, { x: 20, y: 10 }, { x: -20, y: 10 }, { x: -20, y: 25 }], 120, 50),
+        },
       ],
     },
     {
       name: "交互原型",
       items: [
+        // 移动端画板：白底圆角机身 + 状态栏 + 标题 + 内容占位 + 底部主按钮
         {
-          id: "proto-button", name: "按钮",
+          id: "proto-phone", name: "手机画板",
           def: {
-            type: "rect", w: 100, h: 32, text: "按钮",
-            style: { cornerRadius: 6, fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font() },
+            type: "group", w: 320, h: 640,
+            children: [
+              box(0, 0, 320, 640, { fill: PR.white, line: PR.fieldLine, lineWidth: 1.5, cornerRadius: 26 }),
+              label("9:41", 26, 16, 60, 16, { size: 12, bold: true }),
+              label("页面标题", 26, 54, 240, 26, { size: 17, bold: true }),
+              box(26, 96, 268, 128, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 10 }),
+              box(26, 240, 190, 12, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 6 }),
+              box(26, 262, 232, 12, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 6 }),
+              box(26, 560, 268, 44, { fill: PR.navy, line: "transparent", lineWidth: 0, cornerRadius: 8 }),
+              label("按钮", 26, 560, 268, 44, { size: 14, align: "center", color: PR.white }),
+              box(120, 622, 80, 4, { fill: PR.fieldLine, line: "transparent", lineWidth: 0, cornerRadius: 2 }),
+            ],
+          },
+        },
+        // 主按钮：深墨蓝实心 + 白字（样图里的 Read Blogs / Save / Update details）
+        {
+          id: "proto-button", name: "主按钮",
+          def: {
+            type: "rect", w: 120, h: 40, text: "按钮",
+            style: { cornerRadius: 8, fill: PR.navy, line: "transparent", lineWidth: 0, font: font({ size: 14, color: PR.white }) },
+          },
+        },
+        // 次按钮：白底细边 + 深色字（样图里的 Cancel / Today）
+        {
+          id: "proto-button-secondary", name: "次按钮",
+          def: {
+            type: "rect", w: 120, h: 40, text: "次按钮",
+            style: { cornerRadius: 8, fill: PR.white, line: PR.fieldLine, lineWidth: 1, font: font({ size: 14, color: PR.text }) },
           },
         },
         {
           id: "proto-textlabel", name: "文本标签",
           def: {
-            type: "text", w: 120, h: 24, text: "文本标签",
-            style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font({ align: "left" }) },
+            type: "text", w: 140, h: 24, text: "文本标签",
+            style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font({ align: "left", size: 13, color: PR.text }) },
           },
         },
         {
           id: "proto-textbox", name: "文本框",
           def: {
-            type: "rect", w: 160, h: 32, text: "请输入…",
-            style: { cornerRadius: 3, fill: SK.paper, line: SK.inkSoft, lineWidth: 1, font: font({ align: "left", color: SK.textDim }) },
+            type: "rect", w: 220, h: 40, text: "请输入内容",
+            style: { cornerRadius: 6, fill: PR.white, line: PR.fieldLine, lineWidth: 1, font: font({ align: "left", size: 13, color: PR.textDim }) },
+          },
+        },
+        // 表单字段：标题在上、输入框在下的字段组（样图 2 的表单行）
+        {
+          id: "proto-field", name: "表单字段",
+          def: {
+            type: "group", w: 240, h: 70,
+            children: [
+              label("字段名称", 0, 0, 240, 20, { size: 12 }),
+              box(0, 28, 240, 38, { fill: PR.white, line: PR.fieldLine, lineWidth: 1, cornerRadius: 6 }),
+              label("请输入…", 10, 28, 218, 38, { size: 13, color: PR.textDim }),
+            ],
           },
         },
         {
           id: "proto-select", name: "下拉列表",
           def: {
-            type: "group", w: 160, h: 32,
+            type: "group", w: 220, h: 38,
             children: [
-              box(0, 0, 160, 32, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1, cornerRadius: 3 }),
-              label("请选择", 8, 0, 110, 32),
-              poly([{ x: -7, y: -4 }, { x: 7, y: -4 }, { x: 0, y: 4 }], 136, 12, 14, 8,
-                { fill: SK.inkSoft, line: "transparent", lineWidth: 0 }),
+              box(0, 0, 220, 38, { fill: PR.white, line: PR.fieldLine, lineWidth: 1, cornerRadius: 6 }),
+              label("请选择", 10, 0, 170, 38, { size: 13, color: PR.textDim }),
+              chevron(194, 16, 10, 6, PR.textDim),
             ],
           },
         },
         {
           id: "proto-checkbox", name: "复选框",
           def: {
-            type: "group", w: 140, h: 24,
+            type: "group", w: 160, h: 24,
             children: [
-              box(0, 4, 16, 16, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1, cornerRadius: 2 }),
-              label("复选框", 24, 0, 116, 24),
+              box(0, 3, 18, 18, { fill: PR.white, line: PR.fieldLine, lineWidth: 1.2, cornerRadius: 4 }),
+              label("复选项", 28, 0, 132, 24, { size: 13 }),
             ],
           },
         },
         {
           id: "proto-radio", name: "单选按钮",
           def: {
-            type: "group", w: 140, h: 24,
+            type: "group", w: 160, h: 24,
             children: [
-              ellipse(0, 4, 16, 16, { fill: SK.paper, line: SK.inkSoft, lineWidth: 1 }),
-              label("单选按钮", 24, 0, 116, 24),
+              ellipse(0, 3, 18, 18, { fill: PR.white, line: PR.fieldLine, lineWidth: 1.2 }),
+              label("单选项", 28, 0, 132, 24, { size: 13 }),
+            ],
+          },
+        },
+        // 搜索框：浅灰胶囊 + 放大镜（样图 3 顶部的 Search for anything…）
+        {
+          id: "proto-search", name: "搜索框",
+          def: {
+            type: "group", w: 260, h: 40,
+            children: [
+              box(0, 0, 260, 40, { fill: PR.surface, line: "transparent", lineWidth: 0, cornerRadius: 20 }),
+              ellipse(14, 12, 14, 14, { fill: "transparent", line: PR.textDim, lineWidth: 1.6 }),
+              seg(24.5, 23.5, 30.5, 29.5, 1.6, PR.textDim),
+              label("搜索…", 42, 0, 200, 40, { size: 13, color: PR.textDim }),
+            ],
+          },
+        },
+        // 导航项：选中态浅灰底 + 图标位 + 文字（样图 3 左侧菜单）
+        {
+          id: "proto-navitem", name: "导航项",
+          def: {
+            type: "group", w: 200, h: 42,
+            children: [
+              box(0, 0, 200, 42, { fill: PR.surface, line: "transparent", lineWidth: 0, cornerRadius: 8 }),
+              box(14, 13, 16, 16, { fill: PR.skeletonDeep, line: "transparent", lineWidth: 0, cornerRadius: 4 }),
+              label("导航项", 42, 0, 144, 42, { size: 13, bold: true }),
+            ],
+          },
+        },
+        // 列表项：缩略图 + 标题 + 次要说明（样图 1 的文章列表行）
+        {
+          id: "proto-listitem", name: "列表项",
+          def: {
+            type: "group", w: 320, h: 76,
+            children: [
+              box(0, 0, 320, 76, { fill: PR.white, line: PR.line, lineWidth: 1, cornerRadius: 10 }),
+              box(14, 14, 48, 48, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 10 }),
+              label("列表标题", 76, 14, 230, 26, { size: 13, bold: true }),
+              box(76, 46, 170, 9, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 4 }),
+            ],
+          },
+        },
+        // 卡片：白底细边容器 + 标题 + 骨架正文条
+        {
+          id: "proto-card", name: "卡片",
+          def: {
+            type: "group", w: 280, h: 168,
+            children: [
+              box(0, 0, 280, 168, { fill: PR.white, line: PR.line, lineWidth: 1, cornerRadius: 12 }),
+              label("卡片标题", 18, 16, 244, 24, { size: 14, bold: true }),
+              box(18, 54, 176, 10, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(18, 72, 138, 10, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(18, 122, 64, 26, { fill: PR.surface, line: "transparent", lineWidth: 0, cornerRadius: 13 }),
+              label("标签", 18, 122, 64, 26, { size: 12, align: "center" }),
+            ],
+          },
+        },
+        // 深色卡片：深墨蓝底 + 白字 + 白色小按钮（样图 1 的 Start Learning 卡）
+        {
+          id: "proto-darkcard", name: "深色卡片",
+          def: {
+            type: "group", w: 260, h: 156,
+            children: [
+              box(0, 0, 260, 156, { fill: PR.navy, line: "transparent", lineWidth: 0, cornerRadius: 12 }),
+              label("深色卡片", 18, 18, 180, 22, { size: 15, bold: true, color: PR.white }),
+              box(18, 50, 150, 10, { fill: PR.navySoft, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(18, 68, 148, 10, { fill: PR.navySoft, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(200, 44, 42, 42, { fill: "#3F3E64", line: "transparent", lineWidth: 0, cornerRadius: 8 }),
+              box(18, 106, 96, 32, { fill: PR.white, line: "transparent", lineWidth: 0, cornerRadius: 7 }),
+              label("查看详情", 18, 106, 96, 32, { size: 12, bold: true, align: "center", color: PR.navy }),
+            ],
+          },
+        },
+        // 对话框：标题 + 关闭叉 + 表单字段 + 分隔线 + 取消/保存（样图 2 的弹窗）
+        {
+          id: "proto-dialog", name: "对话框",
+          def: {
+            type: "group", w: 340, h: 240,
+            children: [
+              box(0, 0, 340, 240, { fill: PR.white, line: PR.line, lineWidth: 1, cornerRadius: 14 }),
+              label("对话框标题", 24, 14, 250, 34, { size: 15, bold: true }),
+              seg(298, 22, 308, 32, 2, PR.textDim),
+              seg(308, 22, 298, 32, 2, PR.textDim),
+              label("字段名称", 24, 58, 200, 18, { size: 12, color: PR.textDim }),
+              box(24, 78, 292, 36, { fill: PR.white, line: PR.fieldLine, lineWidth: 1, cornerRadius: 6 }),
+              label("请输入…", 34, 78, 272, 36, { size: 13, color: PR.textDim }),
+              box(24, 126, 280, 10, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(24, 146, 220, 10, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 5 }),
+              box(0, 180, 340, 1, { fill: PR.skeleton, line: "transparent", lineWidth: 0 }),
+              box(168, 196, 72, 34, { fill: PR.white, line: PR.fieldLine, lineWidth: 1, cornerRadius: 8 }),
+              label("取消", 168, 196, 72, 34, { size: 13, align: "center" }),
+              box(252, 196, 72, 34, { fill: PR.navy, line: "transparent", lineWidth: 0, cornerRadius: 8 }),
+              label("保存", 252, 196, 72, 34, { size: 13, align: "center", color: PR.white }),
+            ],
+          },
+        },
+        {
+          id: "proto-badge", name: "标签",
+          def: {
+            type: "rect", w: 76, h: 26, text: "标签",
+            style: { cornerRadius: 13, fill: PR.surface, line: "transparent", lineWidth: 0, font: font({ size: 12, color: PR.text }) },
+          },
+        },
+        // 数据指标：小标题 + 大数值（样图 3 的 Planned hours / 42:00）
+        {
+          id: "proto-stat", name: "数据指标",
+          def: {
+            type: "group", w: 180, h: 70,
+            children: [
+              label("指标名称", 0, 0, 180, 20, { size: 12, color: PR.textDim }),
+              label("42:00", 0, 22, 180, 36, { size: 20, bold: true }),
+              box(0, 62, 120, 8, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 4 }),
+            ],
+          },
+        },
+        // 日历事件：左侧色条 + 标题 + 骨架说明 + 时间（样图 3 的周视图事件块）
+        {
+          id: "proto-event", name: "日历事件",
+          def: {
+            type: "group", w: 200, h: 112,
+            children: [
+              box(0, 0, 200, 112, { fill: PR.white, line: PR.line, lineWidth: 1, cornerRadius: 10 }),
+              box(1, 12, 3, 30, { fill: PR.navy, line: "transparent", lineWidth: 0, cornerRadius: 2 }),
+              label("事件标题", 16, 14, 160, 20, { size: 13, bold: true }),
+              box(16, 42, 120, 9, { fill: PR.skeleton, line: "transparent", lineWidth: 0, cornerRadius: 4 }),
+              label("08:00 - 12:00", 16, 78, 150, 18, { size: 11, color: PR.textDim }),
             ],
           },
         },
         {
           id: "proto-image", name: "图片占位",
           def: {
-            type: "group", w: 120, h: 90,
+            type: "group", w: 140, h: 100,
             children: [
-              box(0, 0, 120, 90, { fill: SK.surface, line: SK.inkSoft, lineWidth: 1 }),
-              ellipse(76, 14, 14, 14, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
-              poly([{ x: -30, y: 17 }, { x: 0, y: -17 }, { x: 30, y: 17 }], 28, 42, 60, 34,
-                { fill: SK.blob, line: "transparent", lineWidth: 0 }),
+              box(0, 0, 140, 100, { fill: "#EDEFF3", line: "transparent", lineWidth: 0, cornerRadius: 8 }),
+              ellipse(92, 18, 16, 16, { fill: PR.skeletonDeep, line: "transparent", lineWidth: 0 }),
+              poly([{ x: -38, y: 22 }, { x: 0, y: -22 }, { x: 38, y: 22 }], 32, 48, 76, 44,
+                { fill: PR.skeletonDeep, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
         {
           id: "proto-avatar", name: "人像占位",
           def: {
-            type: "group", w: 90, h: 110,
+            type: "group", w: 76, h: 76,
             children: [
-              box(0, 0, 90, 110, { fill: SK.surface, line: SK.inkSoft, lineWidth: 1 }),
-              ellipse(32, 18, 26, 26, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
-              poly([{ x: -29, y: 19 }, { x: -19, y: -6 }, { x: 0, y: -15 }, { x: 19, y: -6 }, { x: 29, y: 19 }],
-                16, 56, 58, 38, { fill: SK.blob, line: "transparent", lineWidth: 0 }),
+              ellipse(0, 0, 76, 76, { fill: "#E3E6EB", line: "transparent", lineWidth: 0 }),
+              ellipse(29, 17, 18, 18, { fill: PR.white, line: "transparent", lineWidth: 0 }),
+              poly([{ x: -14, y: 10 }, { x: -14, y: 1 }, { x: -7, y: -5 }, { x: 0, y: -7 },
+                { x: 7, y: -5 }, { x: 14, y: 1 }, { x: 14, y: 10 }],
+                22, 45, 32, 17, { fill: PR.white, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
         {
           id: "proto-placeholder", name: "通用占位",
           def: {
-            type: "rect", w: 120, h: 90, text: "占位符",
-            style: { fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font({ color: SK.textDim }) },
+            type: "rect", w: 140, h: 100, text: "占位符",
+            style: { cornerRadius: 8, fill: "#F1F2F5", line: "transparent", lineWidth: 0, font: font({ size: 13, color: PR.textDim }) },
+          },
+        },
+        // 骨架占位条：正文/标题占位（样图里大量的灰色圆角条）
+        {
+          id: "proto-skeleton", name: "骨架占位条",
+          def: {
+            type: "rect", w: 200, h: 12,
+            style: { cornerRadius: 6, fill: PR.skeleton, line: "transparent", lineWidth: 0 },
           },
         },
         {
           id: "proto-panel", name: "动态面板",
-          def: { type: "panel", w: 240, h: 160, panel: { states: [{ id: "st1", name: "状态 1", shapes: [] }] } },
+          def: {
+            type: "panel", w: 240, h: 160,
+            // 显式透明描边：否则会被 stencilStyle 补上主描边，缩略图变成与矩形无异的粗实线框
+            style: { fill: "transparent", line: "transparent", lineWidth: 0 },
+            panel: { states: [{ id: "st1", name: "状态 1", shapes: [] }] },
+          },
         },
         {
           id: "proto-repeater", name: "中继器",
           def: {
-            type: "rect", w: 200, h: 120, text: "中继器",
-            style: { cornerRadius: 3, fill: SK.surface, line: SK.inkSoft, lineWidth: 1, font: font({ color: SK.textDim }) },
+            type: "rect", w: 220, h: 140, text: "中继器",
+            style: { cornerRadius: 10, fill: PR.white, line: PR.line, lineWidth: 1, font: font({ color: PR.textDim }) },
           },
         },
         {
           id: "proto-hotspot", name: "热区",
           def: {
             type: "rect", w: 160, h: 90, text: "热区",
-            style: { cornerRadius: 3, fill: SK.warnFill, line: SK.warnLine, lineWidth: 1, font: font({ color: SK.warnText }) },
+            style: { cornerRadius: 6, fill: SK.warnFill, line: SK.warnLine, lineWidth: 1, font: font({ color: SK.warnText }) },
           },
         },
       ],
@@ -392,17 +623,30 @@
   function drawThumbText(c, s, k, st, align) {
     const f = st.font || {};
     const size = f.size || 13;
-    if (size * k < 4.2) return; // 太小，省略文字避免糊成一团
-    // 小尺寸下略放大字号，保证缩略图里的标签依然可读
-    const drawSize = Math.max(size, Math.min(9 / k, size * 1.6));
     const sx = s.x || 0, sy = s.y || 0;
+    const bw = s.w || 0, bh = s.h || 0;
+    // 内边距按缩略比例反算：固定 3px 在缩小后不足 1px，字头会直接压在控件边框上
+    const padX = Math.max(3, 2.5 / k);
+    const availW = Math.max(bw - padX * 2, 10);
+    // 字号向上放大提升可读性，但受行高约束（否则相邻两行文字会互相重叠），
+    // 可读性阈值也要按放大后的字号算——按原字号算会把中等尺寸控件的文字整段跳掉
+    let drawSize = Math.min(Math.max(size, Math.min(9 / k, size * 2.2)), Math.max(bh * 0.7, 1));
+    if (drawSize * k < 3.2) return; // 太小，省略文字避免糊成一团
+    const setFont = () => { c.font = `${f.bold ? "bold " : ""}${drawSize}px 'Segoe UI'`; };
+    setFont();
+    // 超宽时等比缩字而不是用 maxWidth 压扁字形
+    const measured = c.measureText(s.text || "").width || 1;
+    if (measured > availW) {
+      drawSize *= availW / measured;
+      if (drawSize * k < 3.2) return;
+      setFont();
+    }
     c.save();
-    c.fillStyle = f.color || SK.text;
-    c.font = `${f.bold ? "bold " : ""}${drawSize}px 'Segoe UI'`;
+    c.fillStyle = f.color || PR.text;
     c.textAlign = align === "center" ? "center" : "left";
     c.textBaseline = "middle";
-    const tx = align === "center" ? sx + (s.w || 0) / 2 : sx + 3;
-    c.fillText(s.text || "", tx, sy + (s.h || 0) / 2, Math.max((s.w || 0) - 6, 10));
+    const tx = align === "center" ? sx + bw / 2 : sx + padX;
+    c.fillText(s.text || "", tx, sy + bh / 2, availW);
     c.restore();
   }
 

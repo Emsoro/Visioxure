@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
-project(Visioxure VERSION 0.1.0 LANGUAGES C CXX)
+# 版本号唯一来源：exe 版本资源、前端可见版本、VSDX AppVersion 全部由此派生（见 src/version.hpp）
+project(Visioxure VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -201,6 +202,7 @@ target_include_directories(Visioxure PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/third_party/miniz"
 )
+target_compile_definitions(Visioxure PRIVATE VISIOXURE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(Visioxure PRIVATE tauricpp)
 
 # ============================================================================
@@ -221,5 +223,6 @@ if(BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}/third_party/miniz"
         "${NLOHMANN_INCLUDE_DIR}"
     )
+    target_compile_definitions(vsdx_test PRIVATE VISIOXURE_VERSION="${PROJECT_VERSION}")
     add_test(NAME vsdx_roundtrip COMMAND vsdx_test)
 endif()
