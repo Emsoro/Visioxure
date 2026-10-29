@@ -187,6 +187,7 @@ endif()
 
 add_executable(Visioxure WIN32
     src/main.cpp
+    src/exporter.cpp
     src/vsdx/xml.cpp
     src/vsdx/package.cpp
     src/vsdx/writer.cpp

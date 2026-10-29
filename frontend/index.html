@@ -36,6 +36,16 @@
           <div id="file-recent"></div>
         </div>
       </span>
+      <span class="menu-item" data-menu="export">导出
+        <div class="menu-drop hidden" id="menu-export">
+          <div class="menu-entry" data-act="export-png" title="当前页面 · 与画布同一次渲染（1px=1px）">导出 PNG（当前页）<span class="menu-key">1x</span></div>
+          <div class="menu-entry" data-act="export-png-2x" title="当前页面 · 2 倍尺寸，文字更锐利">导出 PNG（当前页）<span class="menu-key">2x</span></div>
+          <div class="menu-entry" data-act="export-png-t" title="当前页面 · 不铺页面背景色">导出 PNG（当前页·透明底）<span class="menu-key">2x</span></div>
+          <div class="menu-entry" data-act="export-svg" title="当前页面 · 矢量，文本可缩放不发虚">导出 SVG（当前页）</div>
+          <div class="menu-entry" data-act="export-html" title="整个工程 · 单文件，双击即可跑交互与切页">导出 HTML（整个工程）</div>
+          <div class="menu-entry" data-act="export-pdf" title="整个工程 · 每页一张，页面顺序与页面树一致">导出 PDF（整个工程）</div>
+        </div>
+      </span>
     </nav>
     <div class="menubar-right">
       <span id="doc-title">未命名.vsdx</span>
@@ -166,6 +176,11 @@
 <script src="js/page.js"></script>
 <script src="js/style.js"></script>
 <script src="js/props.js"></script>
+<script src="js/export/png.js"></script>
+<script src="js/export/svg.js"></script>
+<script src="js/export/pdf.js"></script>
+<script src="js/export/html.js"></script>
+<script src="js/exporter.js"></script>
 <script src="js/fileio.js"></script>
 <script src="js/app.js" defer></script>
 </body>

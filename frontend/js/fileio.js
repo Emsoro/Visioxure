@@ -175,16 +175,13 @@
   }
 
   // ---------- 菜单 ----------
+  // 一级菜单的开/关/互斥交给 app.js 的通用菜单控制器（initMenus）；
+  // 这里只负责「文件」下拉里各项的动作，以及展开时刷新最近文件
   function initMenu() {
-    const item = document.querySelector('[data-menu="file"]');
     const drop = document.getElementById("menu-file");
-    if (!item || !drop) return;
+    if (!drop) return;
 
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".menu-entry")) return;
-      refreshRecent();
-      drop.classList.toggle("hidden");
-    });
+    document.addEventListener("vx:menuopen", (e) => { if (e.detail === "file") refreshRecent(); });
     drop.addEventListener("click", (e) => {
       const entry = e.target.closest(".menu-entry");
       if (!entry) return;
@@ -197,9 +194,6 @@
       else if (entry.dataset.path) {
         if (confirmDiscard()) openPath(entry.dataset.path);
       }
-    });
-    document.addEventListener("mousedown", (e) => {
-      if (!item.contains(e.target)) drop.classList.add("hidden");
     });
   }
 

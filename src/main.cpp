@@ -6,6 +6,7 @@
 #include "tauricpp/dialog.hpp"
 
 #include "version.hpp"
+#include "exporter.hpp"
 #include "vsdx/reader.hpp"
 #include "vsdx/writer.hpp"
 
@@ -75,23 +76,6 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::string& err) 
     return true;
 }
 
-bool WriteFileBytes(const std::string& path, const std::string& data, std::string& err) {
-    HANDLE h = CreateFileW(Utf8ToWide(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        err = "无法写入文件（路径不存在或无权限）";
-        return false;
-    }
-    DWORD written = 0;
-    BOOL ok = data.empty() ? TRUE : WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
-    CloseHandle(h);
-    if (!ok || written != data.size()) {
-        err = "写入文件失败";
-        return false;
-    }
-    return true;
-}
-
 std::string RecentFilePath() {
     const char* appdata = std::getenv("APPDATA");
     std::string dir = std::string(appdata ? appdata : ".") + "\\Visioxure";
@@ -133,11 +117,12 @@ void PushRecent(const std::string& path) {
     SaveRecent(list);
 }
 
-bool EndsWithVsdx(const std::string& path) {
-    if (path.size() < 5) return false;
-    std::string tail = path.substr(path.size() - 5);
+// 不区分大小写地判断结尾扩展名（导出对话框用：.png/.svg/.html/.pdf）
+bool EndsWithExt(const std::string& path, const std::string& ext) {
+    if (path.size() < ext.size()) return false;
+    std::string tail = path.substr(path.size() - ext.size());
     std::transform(tail.begin(), tail.end(), tail.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return tail == ".vsdx";
+    return tail == ext;
 }
 
 }  // namespace
@@ -189,6 +174,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     });
 
     // ---------- 文件对话框 ----------
+    // file.save_dialog 同时服务「保存 .vsdx」与「导出 PNG/SVG/HTML/PDF」：
+    // 标题 / 过滤 / 补全扩展名都可由调用方指定，不给参数时行为与以前一致（只认 vsdx）
     bridge.RegisterCommand("file.open_dialog", [&app](const json&) -> json {
         tauricpp::Dialog::OpenOptions opts;
         opts.title = "打开 Visioxure 文档";
@@ -200,13 +187,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     bridge.RegisterCommand("file.save_dialog", [&app](const json& args) -> json {
         tauricpp::Dialog::SaveOptions opts;
-        opts.title = "保存 Visioxure 文档";
+        std::string ext = args.value("extension", std::string(".vsdx"));
+        opts.title = args.value("title", std::string("保存 Visioxure 文档"));
         opts.default_filename = args.value("default_name", std::string("未命名.vsdx"));
-        opts.filters = {{"Visioxure 文档", "*.vsdx"}};
+        if (args.contains("filters") && args["filters"].is_array() && !args["filters"].empty()) {
+            opts.filters.clear();
+            for (const auto& f : args["filters"]) {
+                if (!f.is_object()) continue;
+                opts.filters.push_back({f.value("name", std::string("文件")), f.value("pattern", std::string("*.*"))});
+            }
+        } else {
+            opts.filters = {{"Visioxure 文档", "*.vsdx"}};
+        }
         auto path = tauricpp::Dialog::SaveFile(app.GetWindow().GetHwnd(), opts);
         if (!path || path->empty()) return json{{"success", false}, {"canceled", true}, {"path", ""}};
         std::string p = *path;
-        if (!EndsWithVsdx(p)) p += ".vsdx";
+        if (!ext.empty() && !EndsWithExt(p, ext)) p += ext;   // 用户在对话框里手输的名字没带扩展名时补上
         return json{{"success", true}, {"path", p}};
     });
 
@@ -220,7 +216,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::string err;
         std::string bytes = vsx::BuildVsdxBytes(args["doc"], err);
         if (bytes.empty()) return json{{"success", false}, {"error", err.empty() ? "生成 VSDX 失败" : err}};
-        if (!WriteFileBytes(path, bytes, err)) return json{{"success", false}, {"error", err}};
+        if (!vxex::WriteOutputFile(path, bytes, err)) return json{{"success", false}, {"error", err}};
         PushRecent(path);
         return json{{"success", true}, {"path", path}, {"size", bytes.size()}};
     });
@@ -238,6 +234,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         PushRecent(path);
         return json{{"success", true}, {"path", path}, {"doc", doc}, {"warnings", warnings}};
     });
+
+    // ---------- 导出落盘 ----------
+    // 产物内容（PNG 位图 / SVG / HTML / PDF 字节）全部在前端生成，这里只解码 base64 并写盘
+    bridge.RegisterCommand("export.write", [](const json& args) -> json { return vxex::ExportWrite(args); });
 
     // ---------- 最近文件 ----------
     bridge.RegisterCommand("app.recent_files", [](const json& args) -> json {

@@ -39,6 +39,34 @@ async function initBridge() {
   }
 }
 
+// ---------- 菜单栏：一级菜单的开/关/悬停切换（各菜单项的动作仍由 fileio/exporter 自己处理） ----------
+// 「文件」「导出」等多个一级菜单共用一套行为：点标题开/关并互斥、展开时悬停到别的菜单直接切换、
+// 点菜单外任意处全部收起。菜单展开时派发 vx:menuopen，供「最近文件」等按需刷新
+function initMenus() {
+  const items = $$(".menus .menu-item[data-menu]");
+  const drops = items.map((it) => it.querySelector(".menu-drop")).filter(Boolean);
+  const isOpen = (d) => d && !d.classList.contains("hidden");
+  const closeAll = (except) => drops.forEach((d) => { if (d !== except) d.classList.add("hidden"); });
+  const open = (item, drop) => {
+    closeAll(drop);
+    if (isOpen(drop)) return;
+    drop.classList.remove("hidden");
+    document.dispatchEvent(new CustomEvent("vx:menuopen", { detail: item.dataset.menu }));
+  };
+  items.forEach((item) => {
+    const drop = item.querySelector(".menu-drop");
+    if (!drop) return;
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".menu-entry")) return;   // 交给具体菜单的动作处理器
+      if (isOpen(drop)) drop.classList.add("hidden");
+      else open(item, drop);
+    });
+    // 已有菜单展开时，悬停到别的一级菜单即切换（桌面软件菜单惯例）
+    item.addEventListener("mouseenter", () => { if (drops.some(isOpen)) open(item, drop); });
+  });
+  document.addEventListener("mousedown", (e) => { if (!e.target.closest(".menus")) closeAll(null); });
+}
+
 // ---------- 左右面板 Tab ----------
 function initPanelTabs() {
   $$("[data-tabs]").forEach((tabs) => {
@@ -101,6 +129,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (VX.Meta) VX.Meta.init();
   if (VX.PagePanel) VX.PagePanel.init();
   VX.FileIO.init();
+  if (VX.Exporter) VX.Exporter.init();   // 「导出」一级菜单里的导出项
+  initMenus();                           // 一级菜单（文件 / 导出）的开合与互斥
   initPanelTabs();
   initTools();
   initBrandLinks();

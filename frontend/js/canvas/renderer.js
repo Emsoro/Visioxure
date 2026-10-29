@@ -28,8 +28,12 @@
     c.closePath();
   }
 
-  // 屏幕最小描边宽度：缩小视图时 1.5px 线条会淡到看不见
-  function strokeWidth(w, zoom) {
+  // 屏幕最小描边宽度：缩小视图时 1.5px 线条会淡到看不见。
+  // 但这个「最小 1 屏幕像素」只属于编辑态：导出/预览的 scale 是靠 zoom 放大实现的，
+  // 若照搬会让 2x/3x 导出和 PDF 的线比 1x 细（同样的世界线宽被不同的屏幕下限夹住），
+  // 所以导出上下文（opts.exported）按真实世界线宽绘制
+  function strokeWidth(w, zoom, exported) {
+    if (exported) return Math.max(w || 0, 0.01);
     return Math.max(w || 0, 1 / (zoom || 1));
   }
 
@@ -64,9 +68,9 @@
   }
 
   // 连接线：实时布线折线/曲线 + 两端箭头（世界坐标绘制）
-  function drawConnector(c, s, label) {
+  function drawConnector(c, s, label, opts) {
     const st = s.style || {};
-    const lw = strokeWidth(st.lineWidth || 1.5, VX.state.zoom);
+    const lw = strokeWidth(st.lineWidth || 1.5, opts && opts.zoom, opts && opts.exported);
     const color = st.line || "#37474f";
     const pts = VX.Routing.pointsOf(s);
     if (!pts || pts.length < 2) return;
@@ -233,7 +237,7 @@
     if (offX || offY) c.translate(offX, offY);
 
     // 连接线：不走"中心平移+旋转"管线，按实时布线折线绘制
-    if (s.type === "connector") { drawConnector(c, s, text); c.restore(); return; }
+    if (s.type === "connector") { drawConnector(c, s, text, opts); c.restore(); return; }
 
     // 组合：递归绘制子形状（子形状为世界坐标；组不旋转——旋转在解组语义上作用于各子形状）
     if (s.type === "group") {
@@ -297,7 +301,7 @@
     if (hasFill) { c.fillStyle = st.fill; c.fill(s.type === "path" && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd"); }
     if (hasLine) {
       c.strokeStyle = st.line;
-      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom);
+      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom, opts && opts.exported);
       const dashed = applyDash(c, st, c.lineWidth);
       c.stroke();
       if (dashed) c.setLineDash([]);
@@ -325,11 +329,19 @@
   }
 
   // 形状层：世界坐标 → 视口变换
+  // 图层可见性在这里过滤（而不是在绘制分支里）：隐藏的层既不显示也不应被导出，
+  // 与 hit.selectable 的判定同源（锁定层仍然可见，只是不可选中）
+  function layerVisible(page, s) {
+    if (!s || !s.layer) return true;
+    const lay = (page.layers || []).find((l) => l.id === s.layer);
+    return !lay || lay.visible !== false;
+  }
+
   function drawShapes(c, page, vp, opts) {
     c.save();
     c.translate(vp.ox, vp.oy);
     c.scale(vp.zoom, vp.zoom);
-    const shapes = (page.shapes || []).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
+    const shapes = (page.shapes || []).filter((s) => layerVisible(page, s)).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
     // 单个形状绘制出错不能中断整帧（否则它之后的所有形状/选择框一起消失）
     for (const s of shapes) {
       c.save();
@@ -424,16 +436,19 @@
     const p0 = vp.w2s(0, 0);
     const pw = pg.size.w * z, ph = pg.size.h * z;
 
-    // 页面阴影 + 背景色（页面设置里可改，默认白色）
-    c.save();
-    c.shadowColor = "rgba(0,0,0,0.15)";
-    c.shadowBlur = 12;
-    c.shadowOffsetY = 3;
-    c.fillStyle = pg.background || "#ffffff";
-    c.fillRect(p0.x, p0.y, pw, ph);
-    c.restore();
+    // 页面背景色（页面设置里可改，默认白色）；阴影只是编辑器里把页面从灰底里浮出来，
+    // 导出（PNG/SVG/PDF）不带：投影会在页面四边糊出一圈灰边，既污染图片也放大导出尺寸差异
+    if (!(opts && opts.exported)) {
+      c.save();
+      c.shadowColor = "rgba(0,0,0,0.15)";
+      c.shadowBlur = 12;
+      c.shadowOffsetY = 3;
+      c.fillStyle = pg.background || "#ffffff";
+      c.fillRect(p0.x, p0.y, pw, ph);
+      c.restore();
+    }
 
-    // 网格（页面内）；预览时由 opts.grid 关闭
+    // 网格（页面内）；预览与导出由 opts.grid 关闭
     const showGrid = opts && opts.grid != null ? opts.grid : VX.state.grid;
     if (showGrid) {
       c.save();
@@ -451,10 +466,12 @@
       c.restore();
     }
 
-    // 页面边框
-    c.strokeStyle = "#d0d4da";
-    c.lineWidth = 1;
-    c.strokeRect(p0.x + 0.5, p0.y + 0.5, pw - 1, ph - 1);
+    // 页面边框：编辑器里靠它区分「页面」与「灰底」；导出产物不该带这圈浅灰框
+    if (!(opts && opts.exported)) {
+      c.strokeStyle = "#d0d4da";
+      c.lineWidth = 1;
+      c.strokeRect(p0.x + 0.5, p0.y + 0.5, pw - 1, ph - 1);
+    }
   }
 
   function draw(c) {
@@ -557,6 +574,7 @@
     wrapText,   // 供文本就地编辑测量复用
 
     // 预览/导出共用：把一页（可带交互覆盖）画到指定 2D 上下文
+    // opts: { zoom, ox, oy, grid, over(shape), exported }
     drawScene(c, page, opts) {
       const vp = {
         zoom: opts.zoom, ox: opts.ox, oy: opts.oy,

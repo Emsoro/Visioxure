@@ -8,8 +8,8 @@
 
 ## 0. 核对结论（一句话版）
 
-**P0–P5 已完整落地可用（含 S2 属性面板），P6（导出）零代码，P7（打磨）未开始。**
-当前产品是「能画流程图、能读写 Visio 文件、能跑原型、属性能精确编辑的编辑器」，但**还交不出去**——没有任何导出能力。
+**P0–P5 已完整落地可用（含 S2 属性面板），P6（导出）S1 已交付（PNG/SVG/HTML/PDF 四种），P7（打磨）未开始。**
+当前产品能画流程图、读写 Visio 文件、跑原型、属性能精确编辑，**且能交得出去**——一级菜单「导出」（在「文件」右侧）可出 PNG/SVG（当前页）与 HTML/PDF（整个工程）；多页 zip 打包、图片插入等仍在 §7。
 
 > **2026-10-29 增量**：S2 属性面板已交付（新增 `frontend/js/props.js`），同时修正了三个相关缺陷：面板输入框屏蔽全局快捷键导致 Ctrl+Z 失效、撤销/重做丢失当前页与选中、右侧 6 个 Tab 折行。另修正 `37dfae3` 引入的回归：渲染器改为「有填充才闭合」后，形状库的透明填充多边形（三角形/梯形/菱形/箭头）缺一条闭合边，现改为由 `path.closed[]` 显式声明开合。验收改为 Playwright 脚本化（`test/e2e/`，一条命令跑完 56 项断言），不再依赖人工截图识别。随后又修了一个同类的缩放缺陷：菱形/三角形/梯形的几何存在 `path.subpaths`（局部坐标），拖下边手柄只改包围盒、图形照原样画，于是「选框变低了但边框没变」；现把局部坐标归到「设计尺寸 `path.design`」，绘制/命中/多边形化/导出四处统一按 w÷design 缩放（缺省为 1，旧文件与导入的 vsdx 行为不变），属性面板也不再对纯路径隐藏宽高，断言增至 88 项。
 
@@ -18,9 +18,9 @@
 | 偏差 | 计划 | 实际 | 影响 |
 |---|---|---|---|
 | 后端文档模型 | `src/document.hpp/.cpp`（JSON 校验/迁移） | 不存在；校验仅在前端 `Model.load`（只查 `format`） | 版本迁移无落点，坏文件靠前端 try/catch |
-| 导出层 | `frontend/js/export/{html,svg,pdf}.js` + `src/exporter.*` | 不存在 | P6 全部待做，架构需按现状重设计（见 §7-S1） |
+| 导出层 | `frontend/js/export/{html,svg,pdf}.js` + `src/exporter.*` | 已建：`export/{png,svg,pdf,html}.js` + `exporter.js` + `src/exporter.{cpp,hpp}` | P6-S1 已交付（见 §7-S1）；多页 zip 打包顺延 A1 |
 | 前端目录 | `panels/`、`tools/`、`images.js`、`library.js`、`canvas/{handles,ruler}.js` | 扁平 21 个文件；手柄在 `overlay.js`+`tools.js`，标尺在 `overlay.js` | 目录更扁平，可维护性尚可，不强求拆分 |
-| Bridge | 9 条（含 `export.write`、`app.close_confirm`） | 10 条（多了 `bridge.test`/`app.get_info`/`app.open_url`，缺 `export.write`/`app.close_confirm`） | 导出与关窗拦截无后端入口 |
+| Bridge | 9 条（含 `export.write`、`app.close_confirm`） | 11 条（新增 `export.write`；多了 `bridge.test`/`app.get_info`/`app.open_url`，仍缺 `app.close_confirm`） | 导出落盘已接；关窗拦截无后端入口 |
 
 ---
 
@@ -259,11 +259,11 @@ log_error            // 前端诊断
 
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
-| 46 | HTML（单文件 / 文件夹 / zip） | ⬜ | 交互运行时可直接复用 |
-| 47 | PNG（1x/2x/3x、透明底、全部页） | ⬜ | `drawScene` 可离屏复用 |
-| 48 | SVG（矢量、文本 `tspan`） | ⬜ | 需新建 `export/svg.js` |
-| 49 | PDF（栅格 JPEG + `DCTDecode`） | ⬜ | 需新建 `export/pdf.js` |
-| 50 | `export.write` 后端命令 + 导出对话框 | ⬜ | 需新建 `src/exporter.cpp` |
+| 46 | HTML（单文件 / 文件夹 / zip） | ✅ | 单文件自包含可交互（内联运行时+文档 JSON）；文件夹/zip 打包待做（A1） |
+| 47 | PNG（1x/2x/3x、透明底、全部页） | ✅ | 当前页离屏 `drawScene`，与画布逐像素一致；多页由 PDF 覆盖 |
+| 48 | SVG（矢量、文本 `tspan`） | ✅ | `export/svg.js` 与渲染器同口径（圆角/虚线/箭头/多行文本） |
+| 49 | PDF（栅格 JPEG + `DCTDecode`） | ✅ | `export/pdf.js` 整个工程多页单文件，1px=0.75pt |
+| 50 | `export.write` 后端命令 + 导出对话框 | ✅ | `src/exporter.cpp` base64 解码落盘；`file.save_dialog` 参数化 |
 
 ### 6.8 VSDX 读写
 
@@ -300,7 +300,7 @@ log_error            // 前端诊断
 
 | 优先级 | 功能 | 为什么现在做 | 验收标准 | 预计改动 |
 |---|---|---|---|---|
-| **S1** | **导出 MVP：HTML 单文件 + PNG（1x/2x/3x、透明底）** | 产品定位写着「可导出 HTML/PNG/PDF/SVG」，当前 0 导出，交付闭环断裂；且两者都能直接复用 `drawScene` 与 `interact.js`，性价比最高 | 菜单「文件→导出」可选 HTML/PNG；导出的 HTML 双击可跑交互、页面可切换；PNG 与画布像素一致 | 新增 `export/html.js`、`export/png.js`、`src/exporter.cpp`、`export.write`、菜单与对话框 |
+| ~~**S1**~~ ✅ | **导出 MVP：PNG / SVG / HTML / PDF**（2026-10-29 已交付） | 产品定位写着「可导出 HTML/PNG/PDF/SVG」，交付闭环已接上；四种产物均复用 `drawScene`/`interact.js` 保证与编辑一致 | 已交：一级菜单「导出」（在「文件」右侧）出 PNG（1x/2x/3x、透明底、当前页）/ SVG（当前页矢量）/ HTML（整个工程自包含可交互）/ PDF（整个工程多页）；`export.write` 落盘，无 Bridge 时退化下载；验收 `test/e2e/check_export.js`（65 项） | 已交：`export/{png,svg,pdf,html}.js` + `exporter.js` + `src/exporter.{cpp,hpp}` + `export.write` + `file.save_dialog` 参数化 + 菜单 |
 | ~~**S2**~~ ✅ | **形状属性面板（几何 + 文本样式）**（2026-10-29 已完成） | 没有它，圆角/透明度/字体/字号/对齐/精确坐标全部不可编辑——等于让用户用模板默认值拼图；模型与渲染器都已支持，纯 UI 缺失 | 选中形状可改 x/y/w/h/角度/圆角/透明度；文本可改字体/字号/加粗/颜色/水平·垂直对齐；多选混合值显示「多个值」；全部走 History | 已交：`frontend/js/props.js` + `index.html` 挂「属性」Tab + `app.js` 初始化；验收 `test/e2e/check_props.js` |
 | **S3** | **图片插入（png/jpg/svg/webp）** | 线框原型刚需；现在形状库里只有灰色占位块，用户必须去别的工具拼图 | 可从菜单/拖拽插入图片；按 hash 去重存资产表；支持 contain/cover/fill/stretch；保存 vsdx 写 `Foreign`+`media`，重新打开不丢 | `model.js` 加 `assets`、新增 `images.js`、`renderer.js` 画图、`reader/writer` 增 `Foreign` 段 |
 
@@ -308,7 +308,7 @@ log_error            // 前端诊断
 
 | 优先级 | 功能 | 说明 | 验收标准 |
 |---|---|---|---|
-| **A1** | 导出 SVG + PDF + 多页 zip + 导出对话框 | S1 打通后顺延；SVG 复用同一套形状→路径转换（`svg.js` 也被 HTML 导出复用） | SVG 浏览器打开无锯齿、文本 `tspan` 换行；PDF 多页单文件、与画布一致；多页打 zip |
+| **A1** | 导出多页 zip 打包 + 导出对话框细化 | S1 已把 PNG/SVG/HTML/PDF 四种产物打通；A1 只剩多页打包与路径细化 | 多页工程可一次导出为 zip（逐页 PNG / 多页文档）；导出前可选页面范围 |
 | **A2** | 中继器 Repeater | 数据集 + 模板 + 竖向/网格布局，导出/预览渲染；补齐 Axure 侧最后一块 | 模板内 `{{列名}}` 插值；`addRow/deleteRow/filter/sort/分页` 动作可跑；保存 vsdx 往返 |
 | **A3** | 组件库（母版 / 实例 / 解除链接） | 左栏 Tab 已埋好；跨页复用是 Axure 核心价值 | 拖入组件生成实例；改实例文本/样式不影响母版；解除链接变独立形状；嵌套环检测报错 |
 | **A4** | 页面树分组 + 拖拽排序；`autoHeight/auto` 页面模式 | 页面多了以后平铺列表不可用；autoHeight 是原型交付常用模式 | 可建文件夹、拖拽调整层级与顺序；autoHeight 画布随内容向下扩展并写入 vsdx |
@@ -349,7 +349,7 @@ log_error            // 前端诊断
 | **P4 Axure** | 交互面板 / 动态面板 / 三级变量 / F5 预览 | 3 页原型可跑 | ✅ |
 | **P5 元数据** | 注释/链接/脚本面板 + `User` 段往返 | 保存重开不丢 | ✅（Visio 原生段 ⬜） |
 | **P5.5 属性面板** | 几何 + 文本样式 + 圆角/透明度（**S2**） | 所有样式可编辑、可撤销 | ✅（`test/e2e/check_props.js`） |
-| **P6 导出** | HTML / PNG（**S1**）→ SVG / PDF / zip（**A1**） | 导出 HTML 可交互、PNG/PDF 一致 | ⬜ |
+| **P6 导出** | HTML / PNG（**S1**）→ SVG / PDF / zip（**A1**） | 导出 HTML 可交互、PNG/PDF 一致 | ✅ S1（PNG/SVG/HTML/PDF，`test/e2e/check_export.js`）· zip 打包待 A1 |
 | **P6.5 图片 + 中继器 + 组件库** | **S3 / A2 / A3** | 原型可插入图片、可重复列表、可复用组件 | ⬜ |
 | **P7 打磨** | 布线避障 / 剪贴板 / 关窗确认 / 性能 / 主题 / 测试 | 500+ 形状不卡、ctest 全绿 | ⬜ |
 
