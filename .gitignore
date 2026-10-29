@@ -45,3 +45,6 @@ canvas.png
 *.tmp
 .tmp_*
 build_basic.vsdx
+
+# 本地推文草稿（不入库）
+docs/
