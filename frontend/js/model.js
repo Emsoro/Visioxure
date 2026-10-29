@@ -21,6 +21,7 @@ window.VX = window.VX || {};
     ox: 40, oy: 40,     // 世界原点的屏幕偏移（平移）
     grid: true,
     gridSize: 10,
+    gridKind: "small",  // 网格绘制样式：small / large / dots / none（跟着页面设置走）
     mouse: { x: 0, y: 0 },   // 画布内屏幕坐标
     marquee: null,      // 框选矩形（世界坐标）
     alignLines: [],     // 吸附对齐线（世界坐标，瞬态）
@@ -48,12 +49,24 @@ window.VX = window.VX || {};
   // 页面纸张的默认背景色：新建页面、新建文档、旧文件与未声明底色的 VSDX 都回退到它
   const DEFAULT_PAGE_BG = "#FFFFFF";
 
+  // 页面网格样式：小网格（10px 细线）/ 大网格（10px 细线 + 每 50px 主线）/ 网点 / 无。
+  // 只影响编辑器里的绘制与吸附，不进任何导出产物
+  const GRID_KINDS = ["small", "large", "dots", "none"];
+
+  // 当前页的网格样式落到编辑器状态：state.grid 仍是「显示 + 吸附」总开关（tools.js 靠它判断）
+  function applyPageGrid(p) {
+    const kind = p && GRID_KINDS.indexOf(p.grid) >= 0 ? p.grid : "small";
+    state.gridKind = kind;
+    state.grid = kind !== "none";
+  }
+
   function makePage(name) {
     return {
       id: "p" + nextPageId++,
       name: name || ("页面-" + nextPageId),
       size: { mode: "fixed", w: 800, h: 1100, orientation: "portrait" },
       background: DEFAULT_PAGE_BG,  // 页面背景色
+      grid: "small",        // 网格样式（页面设置里改）
       guides: [],           // {dir:'v'|'h', pos} 世界坐标
       variables: [],
       layers: [{ id: "l1", name: "默认", visible: true, locked: false }],
@@ -108,6 +121,7 @@ window.VX = window.VX || {};
       const p = makePage("页面-1");
       doc.pages.push(p);
       currentPageId = p.id;
+      applyPageGrid(p);
       state.dirty = true;
     },
 
@@ -117,6 +131,7 @@ window.VX = window.VX || {};
     setCurrentPage(id) {
       if (doc.pages.some((p) => p.id === id)) {
         currentPageId = id;
+        applyPageGrid(this.page(id));   // 网格样式是每页的设置
         state.selection = [];
         state.selGuides = [];
         state.dirty = true;
@@ -127,6 +142,7 @@ window.VX = window.VX || {};
       const p = makePage("页面-" + (doc.pages.length + 1));
       doc.pages.push(p);
       currentPageId = p.id;
+      applyPageGrid(p);
       state.selection = [];
       state.selGuides = [];
       state.dirty = true;
@@ -145,6 +161,7 @@ window.VX = window.VX || {};
       doc.pages.splice(i, 1);
       if (currentPageId === id) {
         currentPageId = doc.pages[Math.min(i, doc.pages.length - 1)].id;
+        applyPageGrid(this.page(currentPageId));
         state.selection = [];
         state.selGuides = [];
       }
@@ -170,6 +187,16 @@ window.VX = window.VX || {};
       const i = doc.pages.findIndex((p) => p.id === id);
       if (i < 0) return false;
       return this.movePageTo(id, i + delta);
+    },
+    // 页面网格样式：small / large / dots / none（非法值回退小网格）
+    setPageGrid(kind) {
+      const p = this.page();
+      if (!p) return;
+      p.grid = GRID_KINDS.indexOf(kind) >= 0 ? kind : "small";
+      applyPageGrid(p);
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
     },
     // 页面尺寸（px）：宽/高写入 size，横竖方向随之推导
     setPageSize(w, h) {
@@ -525,11 +552,14 @@ window.VX = window.VX || {};
       doc.pages.forEach((p) => {
         // 页面缺底色（旧文件 / 手写 JSON / 未声明 FillForegnd 的导入件）时回退白纸
         if (!p.background) p.background = DEFAULT_PAGE_BG;
+        // 旧文件没有网格样式，统一补小网格
+        if (GRID_KINDS.indexOf(p.grid) < 0) p.grid = "small";
         const pid = parseInt(String(p.id).slice(1), 10) || 1;
         nextPageId = Math.max(nextPageId, pid + 1);
         scan(p.shapes);
       });
       currentPageId = doc.pages[0] ? doc.pages[0].id : null;
+      applyPageGrid(doc.pages[0]);
       state.selection = [];
       state.selGuides = [];
       state.hoverShapeId = null;

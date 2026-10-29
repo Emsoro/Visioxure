@@ -839,6 +839,9 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
 
         // 页面/全局变量（P4）：写入 PageSheet 的 User 段，本应用往返保真
         std::string userRows;
+        // 页面网格样式（只在非默认值 small 时写；Visio 侧当自定义单元格，不影响打开）
+        std::string gridKind = JStr(page, "grid", "small");
+        if (gridKind != "small") userRows += UserRow("VXGrid", gridKind);
         if (page.contains("variables") && page["variables"].is_array() && !page["variables"].empty()) {
             userRows += UserRow("VXVars", page["variables"].dump());
         }

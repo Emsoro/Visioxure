@@ -455,21 +455,45 @@
       c.restore();
     }
 
-    // 网格（页面内）；预览与导出由 opts.grid 关闭
+    // 网格（页面内）：页面设置里可选 小网格 / 大网格 / 网点 / 无；预览与导出由 opts.grid 关闭
     const showGrid = opts && opts.grid != null ? opts.grid : VX.state.grid;
     if (showGrid) {
+      const kind = (opts && opts.gridKind) || VX.state.gridKind || "small";
+      const gs = VX.state.gridSize * z;
+      const gx = p0.x, gy = p0.y;
       c.save();
       c.beginPath();
-      c.rect(p0.x, p0.y, pw, ph);
+      c.rect(gx, gy, pw, ph);
       c.clip();
-      c.strokeStyle = "#f0f2f5";
-      c.lineWidth = 1;
-      c.beginPath();
-      const gs = VX.state.gridSize * z;
-      const startX = p0.x, startY = p0.y;
-      for (let x = startX; x <= startX + pw; x += gs) { c.moveTo(Math.round(x) + 0.5, startY); c.lineTo(Math.round(x) + 0.5, startY + ph); }
-      for (let y = startY; y <= startY + ph; y += gs) { c.moveTo(startX, Math.round(y) + 0.5); c.lineTo(startX + pw, Math.round(y) + 0.5); }
-      c.stroke();
+      if (kind === "dots") {
+        // 网点：每个交点一个 1px 点，收进同一条路径一次 fill（逐点 fillRect 在 1000+ 点时太慢）
+        c.fillStyle = "#d2d7de";
+        c.beginPath();
+        for (let x = gx; x <= gx + pw; x += gs) {
+          for (let y = gy; y <= gy + ph; y += gs) c.rect(Math.round(x), Math.round(y), 1, 1);
+        }
+        c.fill();
+      } else {
+        // 细线 / 主线分两次描边：大网格每 5 格加深一条（间距仍是 gridSize，吸附不变）
+        const strokeLines = (isMajor, color) => {
+          c.beginPath();
+          for (let i = 0, x = gx; x <= gx + pw; x += gs, i++) {
+            if (!!isMajor !== (kind === "large" && i % 5 === 0)) continue;
+            const px = Math.round(x) + 0.5;
+            c.moveTo(px, gy); c.lineTo(px, gy + ph);
+          }
+          for (let i = 0, y = gy; y <= gy + ph; y += gs, i++) {
+            if (!!isMajor !== (kind === "large" && i % 5 === 0)) continue;
+            const py = Math.round(y) + 0.5;
+            c.moveTo(gx, py); c.lineTo(gx + pw, py);
+          }
+          c.strokeStyle = color;
+          c.stroke();
+        };
+        c.lineWidth = 1;
+        strokeLines(false, "#f0f2f5");
+        if (kind === "large") strokeLines(true, "#dfe4ea");
+      }
       c.restore();
     }
 
@@ -502,7 +526,7 @@
 
     const pg = VX.Model.page();
     if (!pg) return;
-    drawPage(c, pg, vp, { grid: VX.state.grid });
+    drawPage(c, pg, vp, { grid: VX.state.grid, gridKind: VX.state.gridKind });
 
     // 形状（z 升序）：世界坐标 → 视口（缩放 + 平移）
     drawShapes(c, pg, vp, { editor: true });

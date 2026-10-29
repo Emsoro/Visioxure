@@ -1,4 +1,4 @@
-// page.js —— 右侧「页面」属性页：页面尺寸（宽 / 高）与背景色
+// page.js —— 右侧「页面」属性页：页面尺寸（宽 / 高）、背景色与网格样式（小 / 大 / 网点 / 无）
 // 页面级改动同样走 History 事务，可撤销；控件只构建一次，之后按需同步数值
 "use strict";
 
@@ -80,12 +80,43 @@
     return { row, btn, chip, text };
   }
 
+  // 网格样式：小 / 大 / 网点 / 无（只影响画布上网格的绘制与吸附，不进导出）
+  const GRID_OPTS = [
+    ["small", "小", "小网格：10px 细线"],
+    ["large", "大", "大网格：10px 细线 + 每 50px 一条主线"],
+    ["dots", "网点", "网点：网格交点画圆点"],
+    ["none", "无", "不显示网格（同时关闭网格吸附）"],
+  ];
+
+  function gridRow() {
+    const row = el("div", "sp-row");
+    row.appendChild(el("span", "sp-label", "样式"));
+    const seg = el("div", "sp-seg");
+    const btns = {};
+    for (const [kind, text, tip] of GRID_OPTS) {
+      const b = el("button", "sp-seg-btn", text);
+      b.type = "button";
+      b.dataset.grid = kind;
+      b.title = tip;
+      b.addEventListener("click", () => {
+        const page = VX.Model.page();
+        if (!page || (page.grid || "small") === kind) return;
+        apply("修改页面网格", () => VX.Model.setPageGrid(kind));
+      });
+      seg.appendChild(b);
+      btns[kind] = b;
+    }
+    row.appendChild(seg);
+    return { row, btns };
+  }
+
   function build() {
     host.innerHTML = "";
     const title = el("div", "sp-head");
     const w = sizeRow("宽度", "w");
     const h = sizeRow("高度", "h");
     const bg = bgRow();
+    const grid = gridRow();
     const summary = el("div", "pp-summary");
 
     host.appendChild(title);
@@ -95,9 +126,11 @@
     host.appendChild(el("div", "panel-hint", "单位 px；回车或失焦生效，画布内容不会随之缩放。"));
     host.appendChild(el("div", "prop-section", "背景"));
     host.appendChild(bg.row);
+    host.appendChild(el("div", "prop-section", "网格"));
+    host.appendChild(grid.row);
     host.appendChild(summary);
 
-    ui = { title, w, h, bg, summary };
+    ui = { title, w, h, bg, grid, summary };
   }
 
   // 就地刷新数值，避开正在编辑的输入框（否则会打断连续输入）
@@ -110,6 +143,8 @@
     const color = page.background || "#FFFFFF";
 
     ui.title.textContent = page.name || "页面";
+    const kind = page.grid || "small";
+    for (const k in ui.grid.btns) ui.grid.btns[k].classList.toggle("active", k === kind);
     if (document.activeElement !== ui.w.input) ui.w.input.value = String(w);
     if (document.activeElement !== ui.h.input) ui.h.input.value = String(h);
     ui.bg.chip.style.background = color;

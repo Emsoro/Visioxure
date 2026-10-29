@@ -460,12 +460,19 @@
   }
 
   // ---------- 状态栏 ----------
+  // 网格样式的短名（与「页面」面板的四档一一对应）
+  const GRID_NAME = { small: "小", large: "大", dots: "网点", none: "无" };
+
   function bindStatusbar() {
     const grid = document.getElementById("status-grid");
     grid.style.cursor = "pointer";
+    grid.title = "点击切换网格样式：小 / 大 / 网点 / 无（同「页面」面板）";
     grid.addEventListener("click", () => {
-      S().grid = !S().grid;
-      updateStatus();
+      // 与页面设置共用同一个值：小 → 大 → 网点 → 无 循环
+      const order = ["small", "large", "dots", "none"];
+      const cur = S().gridKind || "small";
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      VX.History.run("修改页面网格", () => VX.Model.setPageGrid(next));
       VX.Renderer.invalidate();
     });
     // 当前页：点一下把左侧面板切回「页面树」，不用再去点页签
@@ -491,7 +498,7 @@
         : "当前编辑的页面 · 点击切到左侧「页面树」";
     }
     const g = document.getElementById("status-grid");
-    if (g) g.textContent = S().grid ? "网格 开" : "网格 关";
+    if (g) g.textContent = "网格 " + (GRID_NAME[S().gridKind] || "小");
     syncToolButtons();
     syncArrangeTools();
   }

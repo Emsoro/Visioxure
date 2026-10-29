@@ -197,6 +197,7 @@ json MakeBasicDoc() {
         {"id", "p1"}, {"name", "A&B <1> 页"},
         {"size", {{"mode", "fixed"}, {"w", 600}, {"h", 400}, {"orientation", "landscape"}}},
         {"background", "#EAF2FF"},
+        {"grid", "dots"},   // 页面网格样式（编辑器显示，写入 PageSheet 的 User.VXGrid）
         {"guides", json::array()},
         {"variables", json::array({{{"name", "用户名"}, {"value", "张&三"}, {"scope", "page"}}})},
         {"layers", json::array()},
@@ -220,6 +221,7 @@ json MakeBasicDoc() {
     json p3 = {
         {"id", "p3"}, {"name", "样式页"},
         {"size", {{"mode", "fixed"}, {"w", 1100}, {"h", 800}, {"orientation", "portrait"}}},
+        {"grid", "none"},
         {"guides", json::array()},
         {"variables", json::array()},
         {"layers", json::array({
@@ -290,6 +292,10 @@ void RunBasicScenarios() {
     Check(parsed["pages"][0].value("name", "") == "A&B <1> 页", "页面名特殊字符往返");
     Check(parsed["pages"][0].value("background", "") == "#EAF2FF", "页面背景色往返");
     Check(parsed["pages"][1].value("background", "") == "#FFFFFF", "未设置背景的页面默认白色");
+    // 网格样式：设了要原样回来，没设不能凭空多出字段
+    Check(parsed["pages"][0].value("grid", "") == "dots", "页面网格样式 dots 往返");
+    Check(parsed["pages"][2].value("grid", "") == "none", "页面网格样式 none 往返");
+    Check(!parsed["pages"][1].contains("grid"), "未设置网格的页面不多出 grid 字段");
     CheckNear(parsed["pages"][1]["size"].value("w", 0.0), 400, 0.5, "空页宽度 = 400");
     Check(parsed["pages"][1]["shapes"].empty(), "空页无形状");
     Check(parsed["pages"][2].value("name", "") == "样式页", "第三页名称保留");

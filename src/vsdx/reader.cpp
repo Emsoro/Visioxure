@@ -967,7 +967,8 @@ nlohmann::json ParseNode(const XmlNode& sh, const std::string& id, const Xform& 
             {"angle", 0}, {"z", 0}, {"layer", layer}, {"lock", false}, {"children", children}};
 }
 // 页面/全局变量存于 PageSheet 的 User 段（本应用写入）
-void ReadPageUserVars(const XmlNode& pageNode, nlohmann::json& pageVars, nlohmann::json& globalVars) {
+void ReadPageUserVars(const XmlNode& pageNode, nlohmann::json& pageVars, nlohmann::json& globalVars,
+                      std::string& gridKind) {
     const XmlNode* sheet = pageNode.child("PageSheet");
     if (!sheet) return;
     for (const XmlNode& sec : sheet->children) {
@@ -975,12 +976,17 @@ void ReadPageUserVars(const XmlNode& pageNode, nlohmann::json& pageVars, nlohman
         for (const XmlNode& row : sec.children) {
             if (row.tag != "Row") continue;
             std::string rn = row.attr("N");
-            if (rn != "VXVars" && rn != "VXGlobalVars") continue;
+            if (rn != "VXVars" && rn != "VXGlobalVars" && rn != "VXGrid") continue;
             std::string raw;
             for (const XmlNode& c : row.children) {
                 if (c.tag == "Cell" && c.attr("N") == "Value") raw = UserCellValue(c);
             }
             if (raw.empty()) continue;
+            // 页面网格样式：只认本应用写出的四档值
+            if (rn == "VXGrid") {
+                if (raw == "small" || raw == "large" || raw == "dots" || raw == "none") gridKind = raw;
+                continue;
+            }
             try {
                 nlohmann::json parsed = nlohmann::json::parse(raw);
                 if (!parsed.is_array()) continue;
@@ -1344,7 +1350,8 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
         std::string pageBg = "#FFFFFF";
         ReadPageSheet(*pageNode, pw, ph, pageBg); // 真实 Visio 文件只在 pages.xml 声明页面属性
         nlohmann::json pageVars = nlohmann::json::array();
-        ReadPageUserVars(*pageNode, pageVars, globalVars);
+        std::string gridKind;   // 空 = 文件里没声明，交给前端回退小网格
+        ReadPageUserVars(*pageNode, pageVars, globalVars, gridKind);
         nlohmann::json parsed = ParsePage(pageRoot, name, pw, ph, palette, styles, masters, warnings);
 
         nlohmann::json page = {
@@ -1357,6 +1364,8 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
             {"layers", parsed["layers"]},
             {"shapes", parsed["shapes"]},
         };
+        // 只在文件里写了才带上，避免给自己没改过网格的旧文件凭空加字段
+        if (!gridKind.empty()) page["grid"] = gridKind;
         pages.push_back(page);
     }
 
