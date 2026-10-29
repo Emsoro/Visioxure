@@ -30,7 +30,7 @@
       c.clearRect(0, 0, w, h);   // 透明底：只画形状，不铺页面背景
       VX.Renderer.drawScene(c, page, {
         zoom: scale, ox: pad, oy: pad, grid: false, exported: true, over: opt.over,
-        // drawScene 先画页面再画形状：跳过背景由 renderer 里的 exported 分支负责
+        // paintBg 默认 = !exported，所以透明导出不会补页面底色；要底色就由下面那支自己铺
       });
     } else {
       c.fillStyle = page.background || "#ffffff";

@@ -30,7 +30,8 @@
       VX.state.dirty = true;
     },
 
-    // 适应窗口：整页居中显示（打开文档 / 新建文档时调用）
+    // 适应窗口：整页按窗口缩放到能放下，然后贴工作区左上角（打开文档 / 新建文档时调用）
+    // 钉在左上角而不是居中：多出来的工作区全落在右侧与下方，页面不会随着窗口尺寸漂到中间
     fit(pageW, pageH) {
       const host = document.getElementById("canvas-scroll");
       if (!host || !pageW || !pageH) return;
@@ -39,8 +40,9 @@
       const availH = Math.max(1, host.clientHeight - pad * 2);
       const z = Math.min(MAX, Math.max(MIN, Math.min(availW / pageW, availH / pageH)));
       VX.state.zoom = z;
-      VX.state.ox = (host.clientWidth - pageW * z) / 2;
-      VX.state.oy = (host.clientHeight - pageH * z) / 2;
+      // 左/上只留 pad（页面投影不被裁），其余空白留给右/下
+      VX.state.ox = pad;
+      VX.state.oy = pad;
       VX.state.dirty = true;
       VX.Events.emit("zoom");
     },

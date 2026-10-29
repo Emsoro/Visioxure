@@ -314,11 +314,16 @@ const FIXTURE = {
   check(qErrors.length === 0, "导出 HTML 打开无脚本异常", qErrors.join(" | "));
 
   const boot = await q.evaluate(() => {
-    const tabs = Array.from(document.querySelectorAll("#vx-tabs .vx-tab")).map((b) => b.textContent.trim());
+    const pages = Array.from(document.querySelectorAll("#vx-pages .vx-page-name")).map((b) => b.textContent.trim());
     const cv = document.getElementById("vx-canvas");
-    return { tabs, title: document.getElementById("vx-page-title").textContent, cw: cv.width, ch: cv.height };
+    const side = document.getElementById("vx-side").getBoundingClientRect();
+    const cvr = cv.getBoundingClientRect();
+    return { pages, sideLeft: side.left, sideW: side.width, canvasLeft: cvr.left,
+      title: document.getElementById("vx-page-title").textContent, cw: cv.width, ch: cv.height };
   });
-  check(boot.tabs.join("|") === "页面-1|页面-2", "导出 HTML 顶栏列出全部页面", JSON.stringify(boot.tabs));
+  check(boot.pages.join("|") === "页面-1|页面-2", "导出 HTML 左侧页面树列出全部页面", JSON.stringify(boot.pages));
+  check(boot.sideLeft === 0 && boot.canvasLeft >= boot.sideW - 1, "导出 HTML 页面树在左侧（画布在其右侧）",
+    "sideLeft=" + boot.sideLeft + " sideW=" + boot.sideW + " canvasLeft=" + boot.canvasLeft);
   check(boot.title === "页面-1", "导出 HTML 默认显示第一页", boot.title);
   check(boot.cw > 0 && boot.ch > 0, "导出 HTML 画布已按舞台适配", boot.cw + "x" + boot.ch);
 
@@ -336,6 +341,10 @@ const FIXTURE = {
   });
   check(Math.abs(painted.rect[0] - 0x4a) <= 24 && Math.abs(painted.rect[2] - 0xd9) <= 24,
     "导出 HTML 画出了矩形（与编辑器同色）", JSON.stringify(painted.rect));
+  // 页面底色必须真的铺上：早期 exported 分支连底色一起跳过，空白处露出舞台灰（#e9ebee），
+  // 用户看到的就是「导出的页面不是白的」。空白采样必须接近页面背景色 255
+  check(painted.blank.every((v) => v >= 250),
+    "导出 HTML 页面底色已铺（空白处是白纸，不是舞台灰）", JSON.stringify(painted.blank));
   const interp = await q.evaluate(() => {
     // 交互运行时渲染出的文本应是插值后的 guest，而不是字面 {{username}}
     const rt = null;
@@ -367,7 +376,7 @@ const FIXTURE = {
   await q.waitForTimeout(200);
   const after = await q.evaluate(() => ({
     title: document.getElementById("vx-page-title").textContent,
-    active: (document.querySelector("#vx-tabs .vx-tab.active") || {}).textContent,
+    active: (document.querySelector("#vx-pages .vx-page.active .vx-page-name") || {}).textContent,
     ink: (() => {
       const cv = document.getElementById("vx-canvas");
       const c = cv.getContext("2d");
@@ -378,16 +387,34 @@ const FIXTURE = {
     })(),
   }));
   check(after.title === "页面-2", "导出 HTML 点击形状触发「跳转页面」交互", after.title);
-  check(String(after.active).trim() === "页面-2", "导出 HTML 顶栏高亮跟随切页", String(after.active));
+  check(String(after.active).trim() === "页面-2", "导出 HTML 页面树高亮跟随切页", String(after.active));
   // 第二页矩形填充 #E11D48 = (225,29,72)：红为主、蓝不高（上一版 ink[2]>0x60 会漏判这个蓝值）
   check(Math.abs(after.ink[0] - 0xe1) <= 24 && Math.abs(after.ink[1] - 0x1d) <= 40 && Math.abs(after.ink[2] - 0x48) <= 40,
     "导出 HTML 第二页内容已重绘", JSON.stringify(after.ink));
 
-  // 页面标签点击也能切页
-  await q.click("#vx-tabs .vx-tab:nth-child(1)");
+  // 页面树点击也能切页
+  await q.click("#vx-pages .vx-page:nth-child(1)");
   await q.waitForTimeout(150);
   check((await q.evaluate(() => document.getElementById("vx-page-title").textContent)) === "页面-1",
-    "导出 HTML 顶栏标签可点回第一页");
+    "导出 HTML 左侧页面树可点回第一页");
+
+  // 页面树可折叠：折叠后侧栏变窄、列表隐藏，再点一次恢复
+  await q.click("#vx-side-toggle");
+  await q.waitForTimeout(250);
+  const folded = await q.evaluate(() => ({
+    collapsed: document.getElementById("vx-app").classList.contains("side-collapsed"),
+    sideW: Math.round(document.getElementById("vx-side").getBoundingClientRect().width),
+    listHidden: getComputedStyle(document.getElementById("vx-pages")).display === "none",
+  }));
+  check(folded.collapsed && folded.listHidden && folded.sideW < 60,
+    "导出 HTML 页面树可折叠", JSON.stringify(folded));
+  await q.click("#vx-side-toggle");
+  await q.waitForTimeout(250);
+  const unfolded = await q.evaluate(() => ({
+    collapsed: document.getElementById("vx-app").classList.contains("side-collapsed"),
+    sideW: Math.round(document.getElementById("vx-side").getBoundingClientRect().width),
+  }));
+  check(!unfolded.collapsed && unfolded.sideW > 150, "导出 HTML 页面树可再次展开", JSON.stringify(unfolded));
   await q.close();
 
   // ---------- 5. PDF：整个工程多页 ----------

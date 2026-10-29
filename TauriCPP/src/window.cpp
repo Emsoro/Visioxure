@@ -265,6 +265,12 @@ bool Window::CreateNativeWindow() {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = GetModuleHandle(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    // 应用图标：优先使用 exe 内嵌的图标资源（ID 1，由 app_icon.rc 生成）；
+    // 资源不存在时返回 NULL，回退到系统默认图标，不影响独立使用 TauriCPP 的项目
+    wc.hIcon = static_cast<HICON>(LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
     // 使用配置的背景色作为窗口类背景，消除白色闪烁
     wc.hbrBackground = CreateSolidBrush(config_.bg_color);
     wc.lpszClassName = L"TauriCPPWindowClass";

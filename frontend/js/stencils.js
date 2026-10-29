@@ -41,6 +41,9 @@
     skeletonDeep: "#CBD0DA", // 占位图里的图标/次要色块
     navy: "#2B2A4C",        // 深墨蓝主色：主按钮/强调卡片
     navySoft: "#4B4A72",    // 深色卡片上的次级色块
+    // 占位图（对齐 图片占位.svg / 照片占位.svg 样图的中性灰，区别于蓝调的骨架色）
+    phFill: "#F2F2F2",      // 占位卡片/圆形底
+    phInk: "#A5A5A5",       // 占位图前景（山形、人像剪影）
   };
 
   // ---------- 交互原型：组合构件的局部坐标小工具 ----------
@@ -75,6 +78,24 @@
       type: "path", x, y, w, h, path: { subpaths: [ring], fillRule: "evenodd" },
       style: { fill: color, line: "transparent", lineWidth: 0 },
     };
+  }
+
+  // 拱形轮廓（下平上拱 + 底部小圆角）：照片占位里的人物肩部。
+  // 圆角矩形会把顶部近似成半圆、肩线过陡，这里按样图采样成多边形
+  function archPoly(w, h) {
+    const ry = h * 0.62;                        // 拱高
+    const rb = Math.min(h - ry, w * 0.12);      // 底部圆角半径
+    const pts = [];
+    const arc = (cx, cy, rx, ryy, a0, a1, n) => {
+      for (let i = 0; i <= n; i++) {
+        const a = a0 + (a1 - a0) * (i / n);
+        pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ryy });
+      }
+    };
+    arc(w / 2, ry, w / 2, ry, Math.PI, Math.PI * 2, 10);   // 顶部椭圆弧：左 → 右
+    arc(w - rb, h - rb, rb, rb, 0, Math.PI / 2, 3);        // 右下圆角
+    arc(rb, h - rb, rb, rb, Math.PI / 2, Math.PI, 3);      // 底边 → 左下圆角
+    return pts.map((p) => ({ x: p.x - w / 2, y: p.y - h / 2 }));
   }
 
   // 下拉箭头：闭合多边形模拟细线「v」形（开放路径会被闭合，不能直接画折线）
@@ -254,6 +275,16 @@
             ],
           },
         },
+        // 表格：组合承载的网格，单元格由 table.rows/cols 推导生成（见 table.js），
+        // 行列数在属性面板调整；children 在插入时按包围盒实时生成
+        {
+          id: "proto-table", name: "表格",
+          def: {
+            type: "group", w: 320, h: 160,
+            table: { rows: 4, cols: 3, header: true },
+            children: [],
+          },
+        },
         // 卡片：白底细边容器 + 标题 + 骨架正文条
         {
           id: "proto-card", name: "卡片",
@@ -341,28 +372,34 @@
             ],
           },
         },
+        // 图片占位：浅灰卡片 + 居中的山形剪影（对齐 图片占位.svg：圆点太阳 + 前后两座山）
         {
           id: "proto-image", name: "图片占位",
           def: {
             type: "group", w: 140, h: 100,
             children: [
-              box(0, 0, 140, 100, { fill: "#EDEFF3", line: "transparent", lineWidth: 0, cornerRadius: 8 }),
-              ellipse(92, 18, 16, 16, { fill: PR.skeletonDeep, line: "transparent", lineWidth: 0 }),
-              poly([{ x: -38, y: 22 }, { x: 0, y: -22 }, { x: 38, y: 22 }], 32, 48, 76, 44,
-                { fill: PR.skeletonDeep, line: "transparent", lineWidth: 0 }),
+              box(0, 0, 140, 100, { fill: PR.phFill, line: "transparent", lineWidth: 0, cornerRadius: 6 }),
+              // 后山（右）：包围盒 24×19.5，位于卡片 44%~61% 宽
+              poly([{ x: 0, y: -9.75 }, { x: 12, y: 9.75 }, { x: -12, y: 9.75 }], 61.6, 43, 24, 19.5,
+                { fill: PR.phInk, line: "transparent", lineWidth: 0 }),
+              // 前山（左）：包围盒 18.4×14.9，压在后山左侧形成山峦层次
+              poly([{ x: 0, y: -7.45 }, { x: 9.2, y: 7.45 }, { x: -9.2, y: 7.45 }], 53.4, 47.6, 18.4, 14.9,
+                { fill: PR.phInk, line: "transparent", lineWidth: 0 }),
+              // 太阳：直径 ≈ 卡片宽 4%，贴在前山左上方
+              ellipse(61.05, 38.65, 5.5, 5.5, { fill: PR.phInk, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
+        // 照片占位：圆形底 + 人像剪影（对齐 照片占位.svg：头 17% 直径、肩宽 35%）
         {
-          id: "proto-avatar", name: "人像占位",
+          id: "proto-avatar", name: "照片占位",
           def: {
             type: "group", w: 76, h: 76,
             children: [
-              ellipse(0, 0, 76, 76, { fill: "#E3E6EB", line: "transparent", lineWidth: 0 }),
-              ellipse(29, 17, 18, 18, { fill: PR.white, line: "transparent", lineWidth: 0 }),
-              poly([{ x: -14, y: 10 }, { x: -14, y: 1 }, { x: -7, y: -5 }, { x: 0, y: -7 },
-                { x: 7, y: -5 }, { x: 14, y: 1 }, { x: 14, y: 10 }],
-                22, 45, 32, 17, { fill: PR.white, line: "transparent", lineWidth: 0 }),
+              ellipse(0, 0, 76, 76, { fill: PR.phFill, line: "transparent", lineWidth: 0 }),
+              ellipse(31.42, 20.05, 13.16, 13.16, { fill: PR.phInk, line: "transparent", lineWidth: 0 }),
+              poly(archPoly(26.9, 7.4), 24.55, 41.8, 26.9, 7.4,
+                { fill: PR.phInk, line: "transparent", lineWidth: 0 }),
             ],
           },
         },
@@ -448,6 +485,11 @@
       props.begin = { x: x + b.x, y: y + b.y };
       props.end = { x: x + e.x, y: y + e.y };
       props.route = props.route || "ortho";
+    }
+    // 表格：单元格按世界坐标由包围盒推导，不走「左上角=0,0 + 整体平移」的组合插入路径
+    if (props.table && VX.Table) {
+      VX.Table.build(props);
+      return props;
     }
     if (props.children) {
       offsetChildren(props.children, x, y);
@@ -554,6 +596,13 @@
   function drawThumbNode(c, s, k) {
     // 缩略图与插入后的效果一致：模板没写 style 的条目也套用统一色板的主描边
     const st = Object.assign(stencilStyle(s), s.style || {});
+    // 表格：缩略图用同一套构建逻辑生成单元格，保证与插入后所见一致
+    if (s.table && VX.Table) {
+      const tmp = { type: "group", x: 0, y: 0, w: s.w, h: s.h, table: s.table, children: [] };
+      VX.Table.build(tmp, { ids: false });
+      for (const ch of tmp.children || []) drawThumbNode(c, ch, k);
+      return;
+    }
     if (s.type === "group") {
       for (const ch of s.children || []) drawThumbNode(c, ch, k);
       return;
@@ -655,5 +704,6 @@
     c.restore();
   }
 
-  VX.Stencils = { categories, renderPanel };
+  // tokens 同时供 table.js 复用同一套色板（表格单元格配色不另起 hex）
+  VX.Stencils = { categories, renderPanel, tokens: { SK, PR } };
 })();

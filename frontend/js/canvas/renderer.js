@@ -312,7 +312,8 @@
       const f = st.font || {};
       c.fillStyle = f.color || "#333333";
       c.font = fontString(f);
-      const pad = 4;
+      // 文本内边距：默认 4px，表格单元格等紧凑网格用 font.padding 加宽
+      const pad = f.padding != null ? f.padding : 4;
       const lines = wrapText(text, s.w - pad * 2, (t) => c.measureText(t).width);
       const lh = (f.size || 14) * 1.3;
       const totalH = lines.length * lh;
@@ -436,13 +437,19 @@
     const p0 = vp.w2s(0, 0);
     const pw = pg.size.w * z, ph = pg.size.h * z;
 
-    // 页面背景色（页面设置里可改，默认白色）；阴影只是编辑器里把页面从灰底里浮出来，
-    // 导出（PNG/SVG/PDF）不带：投影会在页面四边糊出一圈灰边，既污染图片也放大导出尺寸差异
-    if (!(opts && opts.exported)) {
+    // 页面底色（页面设置里可改，默认白色）：编辑器里必画；导出时由调用方用 paintBg 决定——
+    // PNG 透明导出要留空（默认跟 exported 走），HTML/原型运行时必须铺上，
+    // 否则舞台那层灰（#e9ebee）会从页面里透出来，导出的页面看着就不是白的
+    const exported = !!(opts && opts.exported);
+    const paintBg = opts && opts.paintBg != null ? !!opts.paintBg : !exported;
+    if (paintBg) {
       c.save();
-      c.shadowColor = "rgba(0,0,0,0.15)";
-      c.shadowBlur = 12;
-      c.shadowOffsetY = 3;
+      // 投影只是编辑器里把页面从灰底里浮出来，导出不带：投影会在页面四边糊出一圈灰边
+      if (!exported) {
+        c.shadowColor = "rgba(0,0,0,0.15)";
+        c.shadowBlur = 12;
+        c.shadowOffsetY = 3;
+      }
       c.fillStyle = pg.background || "#ffffff";
       c.fillRect(p0.x, p0.y, pw, ph);
       c.restore();
@@ -467,7 +474,7 @@
     }
 
     // 页面边框：编辑器里靠它区分「页面」与「灰底」；导出产物不该带这圈浅灰框
-    if (!(opts && opts.exported)) {
+    if (!exported) {
       c.strokeStyle = "#d0d4da";
       c.lineWidth = 1;
       c.strokeRect(p0.x + 0.5, p0.y + 0.5, pw - 1, ph - 1);

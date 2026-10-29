@@ -72,6 +72,14 @@
     return { mixed: false, value: v0 };
   }
 
+  // 表格是「组合」型构件：选中它时属性面板改为表格自身的行列数，
+  // 而不是展开后的单元格几何（展开会变成「N 个对象」且改宽高不会带动网格）
+  function tableTarget() {
+    if (S().selection.length !== 1) return null;
+    const s = VX.Model.shape(S().selection[0]);
+    return (VX.Table && VX.Table.isTable(s)) ? s : null;
+  }
+
   // 统一提交口：一次修改 = 一条撤销记录；提交后刷新其它面板与画布
   function commit(label, fn) {
     if (!targets().length) return;
@@ -121,19 +129,21 @@
       if (!isFinite(v)) { syncSelf(); return; }
       v = clamp(v, o.min != null ? o.min : -100000, o.max != null ? o.max : 100000);
       if (o.digits === 0) v = Math.round(v);
-      const list = targets();
+      const list = o.list ? o.list() : targets();
       commit(o.action || ("修改" + o.label), () => {
         for (const s of list) o.set(s, v);
       });
+      // 强制回写：有些字段会被模型侧夹紧（如表格的最小高度），输入框得显示实际生效值
+      syncSelf(true);
     });
 
     wrap.appendChild(input);
     if (o.unit) wrap.appendChild(el("span", "sp-unit", o.unit));
     row.appendChild(wrap);
 
-    function syncSelf() {
-      const list = targets();
-      if (document.activeElement === input) return;
+    function syncSelf(force) {
+      const list = o.list ? o.list() : targets();
+      if (!force && document.activeElement === input) return;
       const cv = commonVal(list, o.get);
       input.value = cv.mixed ? "" : fmt(cv.value, o.digits);
       input.placeholder = cv.mixed ? "多个值" : "";
@@ -142,8 +152,8 @@
     return row;
   }
 
-  // 分段按钮行（对齐/加粗等枚举值）
-  function segRow(labelText, opts, get, set) {
+  // 分段按钮行（对齐/加粗等枚举值）；listFn 可指定作用对象（表格传自己的组）
+  function segRow(labelText, opts, get, set, listFn) {
     const row = el("div", "sp-row");
     row.appendChild(el("span", "sp-label", labelText));
 
@@ -153,7 +163,7 @@
       const b = el("button", "sp-seg-btn", o.t);
       b.type = "button";
       b.addEventListener("click", () => {
-        const list = targets();
+        const list = listFn ? listFn() : targets();
         const cv = commonVal(list, get);
         if (!cv.mixed && cv.value === o.v) return;
         commit("修改" + labelText, () => {
@@ -166,7 +176,7 @@
     row.appendChild(seg);
 
     function syncSelf() {
-      const cv = commonVal(targets(), get);
+      const cv = commonVal(listFn ? listFn() : targets(), get);
       for (const b of btns) b.btn.classList.toggle("active", !cv.mixed && cv.value === b.v);
     }
     rows.push({ sync: syncSelf });
@@ -334,6 +344,53 @@
       (s, v) => { fontOf(s).vAlign = v; }));
   }
 
+  // ---------- 表格属性（P7） ----------
+  // 行列数写在 group.table 上，改变时由 VX.Table 重建单元格（按行列坐标保留已填文字）
+  function buildTable(g) {
+    const T = VX.Table;
+    const one = () => [g];
+
+    const geo = document.createDocumentFragment();
+    geo.appendChild(el("div", "prop-section", "位置与大小"));
+    // 组的子形状是世界坐标：改位置/尺寸必须交给 VX.Table.resize 重建，否则网格会留在原地
+    geo.appendChild(numberRow({
+      label: "X", unit: "px", digits: 1, action: "修改位置", list: one,
+      get: (s) => s.x, set: (s, v) => T.resize(s, { x: v }),
+      title: "表格左上角 X（世界坐标 px）",
+    }));
+    geo.appendChild(numberRow({
+      label: "Y", unit: "px", digits: 1, action: "修改位置", list: one,
+      get: (s) => s.y, set: (s, v) => T.resize(s, { y: v }),
+    }));
+    geo.appendChild(numberRow({
+      label: "宽", unit: "px", digits: 1, min: T.minSize(g).w, action: "修改尺寸", list: one,
+      get: (s) => s.w, set: (s, v) => T.resize(s, { w: v }),
+      title: "改宽度时列宽等分重算（最小 = 列数 × " + T.MIN_COL_W + "px）",
+    }));
+    geo.appendChild(numberRow({
+      label: "高", unit: "px", digits: 1, min: T.minSize(g).h, action: "修改尺寸", list: one,
+      get: (s) => s.h, set: (s, v) => T.resize(s, { h: v }),
+      title: "改高度时行高等分重算（最小 = 行数 × " + T.MIN_ROW_H + "px）",
+    }));
+    root.appendChild(geo);
+
+    root.appendChild(el("div", "prop-section", "表格"));
+    root.appendChild(numberRow({
+      label: "行数", digits: 0, min: T.MIN, max: T.MAX, action: "修改行数", list: one,
+      get: (s) => s.table.rows, set: (s, v) => T.setGrid(s, v, s.table.cols),
+      title: "含表头行；加行时表格向下扩展，行高不变",
+    }));
+    root.appendChild(numberRow({
+      label: "列数", digits: 0, min: T.MIN, max: T.MAX, action: "修改列数", list: one,
+      get: (s) => s.table.cols, set: (s, v) => T.setGrid(s, s.table.rows, v),
+      title: "加列时表格向右扩展，列宽不变",
+    }));
+    root.appendChild(segRow("首行",
+      [{ v: true, t: "表头" }, { v: false, t: "数据" }],
+      (s) => !!s.table.header,
+      (s, v) => T.setHeader(s, v), one));
+  }
+
   function render() {
     if (!root) return;
     const list = targets();
@@ -348,10 +405,18 @@
     }
 
     const head = el("div", "sp-head");
-    head.textContent = list.length === 1
-      ? (TYPE_NAMES[list[0].type] || list[0].type)
+    const tb = tableTarget();
+    head.textContent = tb ? "表格"
+      : list.length === 1 ? (TYPE_NAMES[list[0].type] || list[0].type)
       : list.length + " 个对象";
     root.appendChild(head);
+
+    if (tb) {
+      buildTable(tb);
+      root.appendChild(el("div", "panel-hint", "双击表格进入组合，再双击单元格可改文字 · 行列数改动可 Ctrl+Z 撤销"));
+      sync();
+      return;
+    }
 
     if (list.every((s) => s.type === "connector")) {
       root.appendChild(el("div", "panel-hint", "连接线的位置由两端粘附点决定；线型与箭头在「样式」面板。"));

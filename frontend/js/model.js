@@ -45,12 +45,15 @@ window.VX = window.VX || {};
 
   let currentPageId = null;
 
+  // 页面纸张的默认背景色：新建页面、新建文档、旧文件与未声明底色的 VSDX 都回退到它
+  const DEFAULT_PAGE_BG = "#FFFFFF";
+
   function makePage(name) {
     return {
       id: "p" + nextPageId++,
       name: name || ("页面-" + nextPageId),
       size: { mode: "fixed", w: 800, h: 1100, orientation: "portrait" },
-      background: "#FFFFFF",  // 页面背景色
+      background: DEFAULT_PAGE_BG,  // 页面背景色
       guides: [],           // {dir:'v'|'h', pos} 世界坐标
       variables: [],
       layers: [{ id: "l1", name: "默认", visible: true, locked: false }],
@@ -99,6 +102,7 @@ window.VX = window.VX || {};
     on,
     emit,
     defaultStyleFor: defaultStyle, // 供形状库合并模板差异样式
+    DEFAULT_PAGE_BG,               // 页面纸张默认背景色（新建文档/新页面共用同一个值）
 
     init() {
       const p = makePage("页面-1");
@@ -149,16 +153,23 @@ window.VX = window.VX || {};
       emit("change");
       return true;
     },
-    movePage(id, delta) {
+    // 把页面直接挪到指定下标（拖拽排序用）；下标先夹到合法范围，原地不动则返回 false
+    movePageTo(id, index) {
       const i = doc.pages.findIndex((p) => p.id === id);
-      const j = i + delta;
-      if (i < 0 || j < 0 || j >= doc.pages.length) return false;
+      if (i < 0) return false;
+      const j = Math.max(0, Math.min(doc.pages.length - 1, Math.floor(index)));
+      if (j === i) return false;
       const [p] = doc.pages.splice(i, 1);
       doc.pages.splice(j, 0, p);
       state.dirty = true;
       emit("pagechange");
       emit("change");
       return true;
+    },
+    movePage(id, delta) {
+      const i = doc.pages.findIndex((p) => p.id === id);
+      if (i < 0) return false;
+      return this.movePageTo(id, i + delta);
     },
     // 页面尺寸（px）：宽/高写入 size，横竖方向随之推导
     setPageSize(w, h) {
@@ -512,6 +523,8 @@ window.VX = window.VX || {};
         }
       };
       doc.pages.forEach((p) => {
+        // 页面缺底色（旧文件 / 手写 JSON / 未声明 FillForegnd 的导入件）时回退白纸
+        if (!p.background) p.background = DEFAULT_PAGE_BG;
         const pid = parseInt(String(p.id).slice(1), 10) || 1;
         nextPageId = Math.max(nextPageId, pid + 1);
         scan(p.shapes);

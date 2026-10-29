@@ -153,7 +153,8 @@
     const f = st.font || {};
     const c = measureCtx();
     c.font = fontCss(f);
-    const pad = 4;
+    // 与 renderer 同口径：font.padding 缺省 4px（表格单元格用 8px）
+    const pad = f.padding != null ? f.padding : 4;
     const lines = VX.Renderer.wrapText(text, s.w - pad * 2, (t) => c.measureText(t).width);
     const lh = (f.size || 14) * 1.3;
     const totalH = lines.length * lh;

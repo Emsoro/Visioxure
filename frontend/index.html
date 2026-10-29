@@ -101,8 +101,11 @@
       </div>
       <div class="panel-body" data-tab-page="stencils" id="stencil-panel"></div>
       <div class="panel-body hidden" data-tab-page="pages">
+        <button id="btn-page-add" class="page-add" type="button" title="在末尾新增一页">
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+          新增页面
+        </button>
         <div id="page-tree"></div>
-        <div class="panel-hint">双击重命名 · 右键更多操作</div>
       </div>
       <div class="panel-body hidden" data-tab-page="components">
         <div class="panel-hint">暂无组件。<br>组件（母版）可复用到任意页面，P2 接入。</div>
@@ -148,6 +151,8 @@
   <footer id="statusbar">
     <span id="status-msg">就绪</span>
     <span class="status-sep">|</span>
+    <span id="status-page" class="status-page" title="当前编辑的页面 · 点击切到左侧「页面树」"><span>页面</span><b id="status-page-name">—</b></span>
+    <span class="status-sep">|</span>
     <span>缩放 <b id="status-zoom">100%</b></span>
     <span class="status-sep">|</span>
     <span id="status-grid">网格 开</span>
@@ -162,6 +167,7 @@
 <script src="js/geometry.js"></script>
 <script src="js/routing.js"></script>
 <script src="js/stencils.js"></script>
+<script src="js/table.js"></script>
 <script src="js/colorpicker.js"></script>
 <script src="js/canvas/viewport.js"></script>
 <script src="js/canvas/hit.js"></script>

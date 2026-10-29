@@ -12,9 +12,25 @@ import argparse
 from PIL import Image
 
 DEFAULT_SIZES = [16, 24, 32, 48, 64, 128, 256]
+DEFAULT_PAD = 0.06  # 裁边后四周留白占画布比例，避免图形贴边
 
 
-def make_icon(source_path, output_path, sizes=None):
+def normalize(img, trim=False, pad=DEFAULT_PAD):
+    """裁掉透明边并把图形居中铺满正方形画布，缩小到小尺寸时才不会偏心/偏小。"""
+    if not trim and pad <= 0:
+        return img
+
+    bbox = img.getbbox() if trim else None
+    content = img.crop(bbox) if bbox else img
+
+    inner = 1.0 - 2.0 * max(pad, 0.0)
+    side = int(max(content.width, content.height) / inner) if inner > 0 else content.width
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.paste(content, ((side - content.width) // 2, (side - content.height) // 2))
+    return canvas
+
+
+def make_icon(source_path, output_path, sizes=None, trim=False, pad=DEFAULT_PAD):
     if sizes is None:
         sizes = DEFAULT_SIZES
 
@@ -25,6 +41,7 @@ def make_icon(source_path, output_path, sizes=None):
     img = Image.open(source_path)
     if img.mode != "RGBA":
         img = img.convert("RGBA")
+    img = normalize(img, trim=trim, pad=pad)
 
     frames = []
     for size in sizes:
@@ -52,6 +69,17 @@ def main():
         default=None,
         help="Comma-separated sizes (default: 16,24,32,48,64,128,256)",
     )
+    parser.add_argument(
+        "--trim",
+        action="store_true",
+        help="Trim transparent borders before resizing (recommended for logos)",
+    )
+    parser.add_argument(
+        "--pad",
+        type=float,
+        default=DEFAULT_PAD,
+        help=f"Padding ratio around the artwork after trim (default: {DEFAULT_PAD})",
+    )
     args = parser.parse_args()
 
     sizes = None
@@ -62,7 +90,7 @@ def main():
             print("Error: invalid size list, must be comma-separated integers")
             sys.exit(1)
 
-    make_icon(args.source, args.output, sizes)
+    make_icon(args.source, args.output, sizes, trim=args.trim, pad=args.pad)
 
 
 if __name__ == "__main__":

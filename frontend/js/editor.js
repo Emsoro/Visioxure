@@ -229,8 +229,19 @@
   }
 
   // ---------- 页面树 ----------
+  let dragPageId = null;   // 正在拖拽的页面 id（null = 没在拖）
+
   function bindPageTree() {
     const box = document.getElementById("page-tree");
+    const addBtn = document.getElementById("btn-page-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        VX.History.run("新建页面", () => VX.Model.addPage());
+        // 新页追加在末尾：列表长了要确保刚建的那页看得见
+        const active = box.querySelector(".tree-item.active");
+        if (active) active.scrollIntoView({ block: "nearest" });
+      });
+    }
     box.addEventListener("click", (e) => {
       const item = e.target.closest(".tree-item");
       if (item && item.dataset.page) VX.Model.setCurrentPage(item.dataset.page);
@@ -245,9 +256,87 @@
       e.preventDefault();
       openPageMenu(e.clientX, e.clientY, item.dataset.page);
     });
+
+    // 拖拽排序：把手是唯一的拖动源（行内点击选页、双击重命名照旧可用）
+    box.addEventListener("dragstart", (e) => {
+      const handle = e.target.closest(".drag-handle");
+      const item = handle && handle.closest(".tree-item[data-page]");
+      if (!item) return;
+      dragPageId = item.dataset.page;
+      item.classList.add("dragging");
+      // 不塞数据的话部分内核（WebView2 / Firefox）不会真的开始拖
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", dragPageId);
+      }
+    });
+    box.addEventListener("dragend", () => {
+      dragPageId = null;
+      clearPageDrop();
+    });
+    box.addEventListener("dragover", (e) => {
+      if (!dragPageId) return;
+      e.preventDefault();                       // 不 preventDefault 就收不到 drop
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      markPageDrop(pageDropIndex(e.clientY));
+    });
+    box.addEventListener("dragleave", (e) => {
+      if (!box.contains(e.relatedTarget)) clearPageDrop();
+    });
+    box.addEventListener("drop", (e) => {
+      if (!dragPageId) return;
+      e.preventDefault();
+      const id = dragPageId;
+      const at = pageDropIndex(e.clientY);   // 插到第 at 条之前
+      dragPageId = null;
+      clearPageDrop();
+      const from = VX.Model.doc.pages.findIndex((p) => p.id === id);
+      // 先摘掉被拖的那条，后面的位置整体前移一格，所以 at 要减 1
+      const to = at > from ? at - 1 : at;
+      if (from < 0 || to === from) return;
+      VX.History.run("移动页面", () => VX.Model.movePageTo(id, to));
+    });
+
     document.addEventListener("mousedown", onCtxOutside, true);
     document.addEventListener("keydown", onCtxKey, true);
     window.addEventListener("blur", closeCtxMenu);
+  }
+
+  // 拖拽落点：按每行中线判定插到「第几条之前」，落在列表空白处算末尾
+  function pageDropIndex(clientY) {
+    const items = Array.from(document.querySelectorAll("#page-tree .tree-item[data-page]"));
+    for (let i = 0; i < items.length; i++) {
+      const r = items[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return items.length;
+  }
+
+  // 插入位置提示线（单独一个绝对定位的 div，跨行高统一）
+  function markPageDrop(index) {
+    const box = document.getElementById("page-tree");
+    let line = box.querySelector(".page-drop-line");
+    if (!line) {
+      line = document.createElement("div");
+      line.className = "page-drop-line";
+      box.appendChild(line);
+    }
+    const items = Array.from(box.querySelectorAll(".tree-item[data-page]"));
+    let y = 0;
+    if (!items.length) y = 0;
+    else if (index <= 0) y = items[0].offsetTop - 1;
+    else if (index >= items.length) {
+      const last = items[items.length - 1];
+      y = last.offsetTop + last.offsetHeight - 1;
+    } else y = items[index].offsetTop - 1;
+    line.style.top = Math.max(0, y) + "px";
+  }
+
+  function clearPageDrop() {
+    const box = document.getElementById("page-tree");
+    const line = box.querySelector(".page-drop-line");
+    if (line) line.remove();
+    box.querySelectorAll(".tree-item.dragging").forEach((el) => el.classList.remove("dragging"));
   }
 
   function startRenamePage(item) {
@@ -353,9 +442,18 @@
       const item = document.createElement("div");
       item.className = "tree-item page-item" + (p.id === VX.Model.currentPageId() ? " active" : "");
       item.dataset.page = p.id;
-      const icon = document.createElement("span");
-      icon.className = "tree-icon page";
-      item.appendChild(icon);
+      // 行首是拖拽把手（不是可勾选的页图标）：按住它上下拖动改页面顺序
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.title = "拖拽调整页面顺序";
+      handle.draggable = true;
+      handle.innerHTML = '<svg viewBox="0 0 10 16" width="10" height="16" aria-hidden="true">' +
+        '<g fill="currentColor">' +
+        '<circle cx="3" cy="4" r="1.1"/><circle cx="7" cy="4" r="1.1"/>' +
+        '<circle cx="3" cy="8" r="1.1"/><circle cx="7" cy="8" r="1.1"/>' +
+        '<circle cx="3" cy="12" r="1.1"/><circle cx="7" cy="12" r="1.1"/>' +
+        '</g></svg>';
+      item.appendChild(handle);
       item.appendChild(document.createTextNode(p.name));
       box.appendChild(item);
     }
@@ -370,11 +468,28 @@
       updateStatus();
       VX.Renderer.invalidate();
     });
+    // 当前页：点一下把左侧面板切回「页面树」，不用再去点页签
+    const pageTag = document.getElementById("status-page");
+    if (pageTag) {
+      pageTag.addEventListener("click", () => {
+        const tab = document.querySelector('#left-panel .panel-tab[data-tab="pages"]');
+        if (tab) tab.click();
+      });
+    }
   }
 
   function updateStatus() {
     document.getElementById("status-zoom").textContent = Math.round(S().zoom * 100) + "%";
     document.getElementById("status-sel").textContent = String(S().selection.length);
+    // 当前编辑的页面名：任何左侧页签下都能看到（切页 / 重命名 / 新建 / 删除都会刷新）
+    const nameEl = document.getElementById("status-page-name");
+    if (nameEl) {
+      const pg = VX.Model.page();
+      nameEl.textContent = pg ? pg.name : "—";
+      nameEl.parentElement.title = pg
+        ? "当前编辑的页面：" + pg.name + "（点击切到左侧「页面树」）"
+        : "当前编辑的页面 · 点击切到左侧「页面树」";
+    }
     const g = document.getElementById("status-grid");
     if (g) g.textContent = S().grid ? "网格 开" : "网格 关";
     syncToolButtons();
@@ -523,6 +638,7 @@
       if (sp && VX.Stencils) VX.Stencils.renderPanel(sp);
 
       VX.Model.on("pagechange", renderPageTree);
+      VX.Model.on("pagechange", updateStatus);   // 状态栏的当前页名跟着切页 / 改名刷新
       VX.Model.on("selection", updateStatus);
       VX.Events.on("zoom", updateStatus);
       VX.Events.on("history", syncUndoRedo);

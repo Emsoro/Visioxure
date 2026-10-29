@@ -43,4 +43,5 @@ node_modules/
 # 临时测试输出
 canvas.png
 *.tmp
+.tmp_*
 build_basic.vsdx

@@ -158,7 +158,9 @@
             patch.style = Object.assign({}, st, { font: Object.assign({}, fo, { color: "#333333" }) });
           }
           VX.Model.updateShape(id, patch);
-          autosizeText(VX.Model.shape(id));
+          // 表格单元格高度由网格决定，不能跟着文字行数自增高，否则会撑坏行列对齐
+          const edited = VX.Model.shape(id);
+          if (edited && !edited.cell) autosizeText(edited);
         });
       }
       VX.Events.emit("selection");
@@ -439,6 +441,8 @@
         }
         VX.Model.updateShape(c.id, upd);
       } else if (drag.mode === "resize") {
+        // 缩放也要能撤销：首帧拍快照（此时模型还没被改），结束在 up 里提交
+        if (!drag.moved) { VX.History.begin(); drag.moved = true; }
         resizeShape(drag.shape, drag.handle, drag.start, w, e.shiftKey);
       } else if (drag.mode === "rotate") {
         let ang = Math.atan2(w.y - drag.cy, w.x - drag.cx) + Math.PI / 2;
@@ -475,6 +479,8 @@
         S().hoverConnEnd = null;
         if (drag.moved) VX.History.commit("移动连接线端点");
         setHover(null, null);
+      } else if (drag.mode === "resize") {
+        if (drag.moved) VX.History.commit("调整大小");
       } else if (drag.mode === "marquee") {
         const m = S().marquee;
         if (m) {
@@ -584,22 +590,38 @@
     }
 
     const nw = x1 - x0, nh = y1 - y0;
+
+    // 表格：单元格必须始终等分网格。压到行高/列宽低于可读下限时按固定对边撞回下限，
+    // 否则行会被压成几条线、文字溢出（这就是“压高度后表格缩成一团”的原因）
+    if (VX.Table && VX.Table.isTable(s)) {
+      const mn = VX.Table.minSize(s);
+      if (nw < mn.w) {
+        if (handle.includes("w")) x0 = x1 - mn.w; else x1 = x0 + mn.w;
+      }
+      if (nh < mn.h) {
+        if (handle.includes("n")) y0 = y1 - mn.h; else y1 = y0 + mn.h;
+      }
+    }
+    const fw = x1 - x0, fh = y1 - y0;
     // 新中心（局部）→ 世界
     const ncx = (x0 + x1) / 2, ncy = (y0 + y1) / 2;
     const cos2 = Math.cos(ang), sin2 = Math.sin(ang);
     const wx = cx + ncx * cos2 - ncy * sin2;
     const wy = cy + ncx * sin2 + ncy * cos2;
 
-    let x = wx - nw / 2, y = wy - nh / 2;
+    let x = wx - fw / 2, y = wy - fh / 2;
     if (!start.angle) {
-      const sn = snapResize(x, y, nw, nh);
+      const sn = snapResize(x, y, fw, fh);
       x = sn.x; y = sn.y; // 吸附左上角，P1 可接受
     }
-    VX.Model.updateShape(s.id, { x, y, w: nw, h: nh });
+    VX.Model.updateShape(s.id, { x, y, w: fw, h: fh });
 
     // 组：子形状按旧包围盒 → 新包围盒线性映射
-    if (s.type === "group" && start.w > 0.5 && start.h > 0.5) {
-      const kx = nw / start.w, ky = nh / start.h;
+    if (VX.Table && VX.Table.isTable(s)) {
+      // 表格不按比例拉伸单元格（字号不跟着缩放，只会溢出），按新包围盒重排等分网格
+      VX.Table.resize(s, { x, y, w: fw, h: fh });
+    } else if (s.type === "group" && start.w > 0.5 && start.h > 0.5) {
+      const kx = fw / start.w, ky = fh / start.h;
       for (const ch of s.children || []) {
         ch.x = x + (ch.x - start.x) * kx;
         ch.y = y + (ch.y - start.y) * ky;

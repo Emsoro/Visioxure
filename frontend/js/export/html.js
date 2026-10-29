@@ -31,7 +31,7 @@
     return { css, mods };
   }
 
-  // 运行时壳：顶栏（页面切换 + 提示）+ 舞台 + 画布，逻辑与 preview.js 一致
+  // 运行时壳：左侧页面树（可折叠）+ 顶栏（标题/当前页 + 提示）+ 舞台 + 画布，逻辑与 preview.js 一致
   const RUNTIME = `
 (function () {
   "use strict";
@@ -51,6 +51,16 @@
   var hoverId = null, dirty = true, raf = 0, lastT = 0;
 
   function pageName() { var p = rt.page(); return p ? p.name : ""; }
+
+  // 左侧页面树折叠：只记在本次会话里（file:// 下 localStorage 常被禁止，不做持久化）
+  var appEl = document.getElementById("vx-app");
+  function setSideCollapsed(on) {
+    appEl.classList.toggle("side-collapsed", !!on);
+    fit();   // 侧栏宽度变了，舞台重新等比适配
+  }
+  document.getElementById("vx-side-toggle").addEventListener("click", function () {
+    setSideCollapsed(!appEl.classList.contains("side-collapsed"));
+  });
 
   // 页面等比铺满舞台：与 preview.js 的 fit 同一套算法（上限 2x，留 48px 边距）
   function fit() {
@@ -72,21 +82,31 @@
     canvas.height = Math.round(cssH * dpr);
     view.ox = view.oy = 0;
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.fillStyle = "#e9ebee";
+    // 先铺一层页面底色：canvas 尺寸是四舍五入后的整数，行尾/行底可能差半像素，
+    // 留白要与页面同色（早先铺的是舞台灰 #e9ebee，那半像素加上未画底色的页面，整页都发灰）
+    c.fillStyle = p.background || "#FFFFFF";
     c.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
     dirty = true;
-    layoutTabs();
+    layoutPages();
     document.getElementById("vx-page-title").textContent = pageName();
   }
 
-  // 页面标签：导出页里可点击切换（交互里的「打开链接/跳转页面」也走同一套 goPage）
-  function layoutTabs() {
-    var box = document.getElementById("vx-tabs");
+  // 左侧页面树：点击切页（交互里的「打开链接/跳转页面」也走同一套 goPage）
+  function layoutPages() {
+    var box = document.getElementById("vx-pages");
     box.innerHTML = "";
     (rt.doc.pages || []).forEach(function (p) {
       var b = document.createElement("button");
-      b.className = "vx-tab" + (p.id === rt.pageId() ? " active" : "");
-      b.textContent = p.name;
+      b.type = "button";
+      b.className = "vx-page" + (p.id === rt.pageId() ? " active" : "");
+      b.title = p.name;
+      var ico = document.createElement("span");
+      ico.className = "vx-page-ico";
+      var name = document.createElement("span");
+      name.className = "vx-page-name";
+      name.textContent = p.name;
+      b.appendChild(ico);
+      b.appendChild(name);
       b.onclick = function () { if (rt.goPage(p.id)) { fit(); } };
       box.appendChild(b);
     });
@@ -97,10 +117,12 @@
     if (!p) return;
     var dpr = window.devicePixelRatio || 1;
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.fillStyle = "#e9ebee";
+    c.fillStyle = p.background || "#FFFFFF";
     c.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
     VX.Renderer.drawScene(c, p, {
       zoom: view.zoom, ox: view.ox, oy: view.oy, grid: false, exported: true,
+      // exported 默认不画页面底色（PNG 透明导出要留空），原型演出必须画：否则页面是透明/灰的
+      paintBg: true,
       over: function (s) { return rt.over(s); },
     });
   }
@@ -128,7 +150,7 @@
     dirty = true;
     VX.Model.setCurrentPage(rt.pageId());
     document.getElementById("vx-page-title").textContent = pageName();
-    layoutTabs();
+    layoutPages();
     var p = rt.page();
     if (p && Math.abs(p.size.w * view.zoom - canvas.clientWidth) > 1) fit();
   }
@@ -189,18 +211,41 @@
 
   const STYLE = `
 html, body { margin: 0; height: 100%; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
-#vx-app { display: flex; flex-direction: column; height: 100%; background: #e9ebee; }
+/* 左侧页面树 + 右侧舞台：与编辑器「页面面板 + 画布」同一种布局 */
+#vx-app { display: flex; height: 100%; background: #e9ebee; }
+#vx-side { flex: 0 0 200px; display: flex; flex-direction: column; min-height: 0;
+  background: #fff; border-right: 1px solid #dfe3e8; overflow: hidden; transition: flex-basis .14s ease; }
+#vx-app.side-collapsed #vx-side { flex-basis: 34px; }
+#vx-side-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; height: 33px;
+  padding: 0 6px 0 10px; border-bottom: 1px solid #eceff3; font-size: 12px; color: #5b6472; }
+#vx-side-title { flex: 1 1 auto; font-weight: 600; white-space: nowrap; overflow: hidden; }
+#vx-app.side-collapsed #vx-side-head { padding: 0; justify-content: center; }
+#vx-app.side-collapsed #vx-side-title { display: none; }
+#vx-side-toggle { flex: none; width: 22px; height: 22px; display: flex; align-items: center;
+  justify-content: center; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: #8b93a1; cursor: pointer; }
+#vx-side-toggle:hover { background: #f0f2f5; color: #2f6fed; }
+#vx-side-toggle svg { transition: transform .14s ease; }
+#vx-app.side-collapsed #vx-side-toggle svg { transform: rotate(180deg); }
+#vx-pages { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; }
+#vx-app.side-collapsed #vx-pages { display: none; }
+.vx-page { display: flex; align-items: center; gap: 7px; width: 100%; box-sizing: border-box;
+  border: 0; border-radius: 5px; background: transparent; color: #3c4657; font: inherit;
+  font-size: 12px; text-align: left; padding: 5px 7px; cursor: pointer; }
+.vx-page:hover { background: #f4f6f9; }
+.vx-page.active { background: #e3ecff; color: #2f6fed; font-weight: 600; }
+.vx-page-ico { flex: none; width: 10px; height: 12px; border: 1.5px solid currentColor;
+  border-radius: 2px; opacity: .55; }
+.vx-page.active .vx-page-ico { opacity: 1; }
+.vx-page-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#vx-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 #vx-bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #fff;
   border-bottom: 1px solid #dfe3e8; font-size: 12px; color: #5b6472; flex: 0 0 auto; }
 #vx-title { font-weight: 600; color: #243044; }
-#vx-tabs { display: flex; gap: 4px; flex: 1 1 auto; overflow: auto; }
-.vx-tab { border: 1px solid #d6dae1; background: #f6f7f9; color: #3c4657; font-size: 12px;
-  padding: 3px 10px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
-.vx-tab:hover { background: #eef2fb; }
-.vx-tab.active { background: #2f6fed; border-color: #2f6fed; color: #fff; }
 #vx-page-title { color: #243044; font-weight: 600; }
-#vx-hint { color: #8b93a1; }
-#vx-stage { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#vx-hint { margin-left: auto; color: #8b93a1; }
+#vx-stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #vx-canvas { box-shadow: 0 6px 22px rgba(0, 0, 0, .12); background: #fff; }
 `;
 
@@ -226,13 +271,23 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', 'Microsoft YaHei'
       "</head>",
       "<body>",
       '<div id="vx-app">',
-      '  <div id="vx-bar">',
-      '    <span id="vx-title"></span>',
-      '    <span id="vx-tabs"></span>',
-      '    <span id="vx-page-title"></span>',
-      '    <span id="vx-hint">导出的原型 · 可直接点击交互</span>',
-      "  </div>",
-      '  <div id="vx-stage"><canvas id="vx-canvas"></canvas></div>',
+      '  <aside id="vx-side">',
+      '    <div id="vx-side-head">',
+      '      <span id="vx-side-title">页面</span>',
+      '      <button id="vx-side-toggle" type="button" title="折叠 / 展开页面树" aria-label="折叠或展开页面树">',
+      '        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      '      </button>',
+      '    </div>',
+      '    <div id="vx-pages"></div>',
+      '  </aside>',
+      '  <div id="vx-main">',
+      '    <div id="vx-bar">',
+      '      <span id="vx-title"></span>',
+      '      <span id="vx-page-title"></span>',
+      '      <span id="vx-hint">导出的原型 · 可直接点击交互</span>',
+      '    </div>',
+      '    <div id="vx-stage"><canvas id="vx-canvas"></canvas></div>',
+      '  </div>',
       "</div>",
       `<script type="application/json" id="vx-doc">${safeDoc}</script>`,
       scripts,

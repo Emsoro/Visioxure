@@ -137,6 +137,32 @@ body {
 .tree-icon.page { border: 1.5px solid var(--text-dim); border-radius: 2px; background: #fff; }
 .tree-icon.layer { border-radius: 50%; border: 1.5px solid var(--text-dim); }
 
+/* 页面树：顶部新增按钮 + 行首拖拽把手（代替原来那个像勾选框的页图标） */
+.page-add {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; height: 26px; margin-bottom: 6px;
+  border: 1px solid var(--chrome-border); border-radius: 5px;
+  background: var(--panel-bg); color: var(--text); font-size: 12px; cursor: pointer;
+}
+.page-add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.page-add svg { flex: none; }
+
+.drag-handle {
+  display: flex; align-items: center; justify-content: center;
+  width: 10px; height: 16px; flex: none;
+  color: var(--text-dim); opacity: .55; cursor: grab;
+}
+.drag-handle:hover { opacity: 1; color: var(--accent); }
+.drag-handle:active { cursor: grabbing; }
+.tree-item.dragging { opacity: .4; }
+
+/* 拖拽插入位置提示线：由脚本按行高定位到 top */
+#page-tree { position: relative; }
+.page-drop-line {
+  position: absolute; left: 4px; right: 4px; height: 2px;
+  background: var(--accent); border-radius: 1px; pointer-events: none;
+}
+
 /* 形状库：缩略图卡片 + 分类标题（色板与 stencils.js 的 SK 保持一致） */
 .stencil-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .stencil-cat {
@@ -225,6 +251,11 @@ body {
 #statusbar b { color: var(--text); font-weight: 600; }
 .status-sep { color: var(--chrome-border); }
 .status-right { margin-left: auto; }
+
+/* 当前页：左侧面板切到形状库时也能看到自己在改哪一页（点一下切回页面树） */
+.status-page { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.status-page:hover, .status-page:hover b { color: var(--accent); }
+.status-page b { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #bridge-status.ok { color: #1a9e55; }
 #bridge-status.err { color: #d64545; }
 
