@@ -34,10 +34,12 @@
     const p2d = new Path2D();
     const subpaths = (s.path && s.path.subpaths) || [];
     const closedFlags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+    // 与 renderer 同口径：局部坐标是设计尺寸下的，要按包围盒缩放
+    const ks = VX.Geometry.pathScale(s);
     for (let k = 0; k < subpaths.length; k++) {
       const ring = subpaths[k];
       for (let i = 0; i < ring.length; i++) {
-        if (i) p2d.lineTo(ring[i].x, ring[i].y); else p2d.moveTo(ring[i].x, ring[i].y);
+        if (i) p2d.lineTo(ring[i].x * ks.kx, ring[i].y * ks.ky); else p2d.moveTo(ring[i].x * ks.kx, ring[i].y * ks.ky);
       }
       // 与 renderer 同口径：默认闭合，只有显式声明开放的折线不闭合
       if (!closedFlags || closedFlags[k] !== false) p2d.closePath();

@@ -274,8 +274,9 @@
     if (s.type === "ellipse") {
       c.ellipse(0, 0, hw, hh, 0, 0, Math.PI * 2);
     } else if (s.type === "path") {
-      // 子路径为局部坐标（原点=包围盒中心）
+      // 子路径为局部坐标（原点=包围盒中心），按包围盒相对设计尺寸缩放
       const subpaths = (s.path && s.path.subpaths) || [];
+      const ks = VX.Geometry.pathScale(s);
       // 闭合与否由数据显式声明（`path.closed[i]`，由 reader 从 Visio 几何推导），
       // 默认闭合：形状库多边形、布尔运算结果都是无填充的闭合环，
       // 早先用「有填充或首尾重合」猜测会让透明填充的三角形/菱形缺一条闭合边
@@ -284,7 +285,7 @@
         const ring = subpaths[k];
         if (!ring.length) continue;
         for (let i = 0; i < ring.length; i++) {
-          if (i) c.lineTo(ring[i].x, ring[i].y); else c.moveTo(ring[i].x, ring[i].y);
+          if (i) c.lineTo(ring[i].x * ks.kx, ring[i].y * ks.ky); else c.moveTo(ring[i].x * ks.kx, ring[i].y * ks.ky);
         }
         // 开放折线（例：虚线引导线）不能闭合：闭合会凭空多出一条从终点回到起点的斜线
         if (!closedFlags || closedFlags[k] !== false) c.closePath();

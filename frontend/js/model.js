@@ -86,6 +86,13 @@ window.VX = window.VX || {};
              font: { family: "Segoe UI", size: 14, color: "#FFFFFF", bold: false, align: "center", vAlign: "middle" } };
   }
 
+  // path 的 subpaths 是「设计尺寸」下的局部坐标；创建/载入时把当时的包围盒固化为 design，
+  // 之后改 w/h 就是相对 design 缩放图形（见 Geometry.pathScale）。
+  // 必须在数据进入模型时物化：留到绘制时才取默认值的话，默认值会跟着新 w/h 一起变，缩放永远是 1
+  function ensurePathDesign(s) {
+    if (s && s.type === "path" && s.path && !s.path.design) s.path.design = { w: s.w, h: s.h };
+  }
+
   const Model = {
     doc,
     state,
@@ -262,6 +269,7 @@ window.VX = window.VX || {};
         text: type === "text" ? "文本" : "",
         style: defaultStyle(type),
       }, props || {});
+      ensurePathDesign(s);
       // 面板状态编辑中：新形状归入该状态，其余归页面
       const pe = state.panelEdit;
       if (pe) {
@@ -496,6 +504,7 @@ window.VX = window.VX || {};
       nextShapeId = 1; nextPageId = 1;
       const scan = (arr) => {
         for (const s of arr || []) {
+          ensurePathDesign(s);   // 旧文件与导入的 vsdx 没有 design，按当前包围盒固化
           const sid = parseInt(String(s.id).slice(1), 10) || 1;
           nextShapeId = Math.max(nextShapeId, sid + 1);
           if (s.type === "group") scan(s.children);

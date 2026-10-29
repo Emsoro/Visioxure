@@ -2,7 +2,7 @@
 // 用法：node test/e2e/run_all.js
 const { spawnSync } = require("child_process");
 
-const scripts = ["check_props.js", "check_editor.js", "check_stencils.js"];
+const scripts = ["check_props.js", "check_editor.js", "check_stencils.js", "check_path_resize.js"];
 let bad = 0, total = 0;
 for (const s of scripts) {
   const r = spawnSync(process.execPath, [__dirname + "/" + s], { encoding: "utf8" });

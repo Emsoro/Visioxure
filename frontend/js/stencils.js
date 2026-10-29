@@ -592,10 +592,11 @@
     } else if (s.type === "path") {
       // 与 renderer 同口径：默认闭合，只有显式声明 path.closed[i] === false 的开放折线不闭合
       const flags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+      const ks = VX.Geometry.pathScale(s);
       const subs = (s.path && s.path.subpaths) || [];
       for (let k = 0; k < subs.length; k++) {
         const ring = subs[k];
-        ring.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); });
+        ring.forEach((p, i) => { if (i) c.lineTo(p.x * ks.kx, p.y * ks.ky); else c.moveTo(p.x * ks.kx, p.y * ks.ky); });
         if (!flags || flags[k] !== false) c.closePath();
       }
     } else {

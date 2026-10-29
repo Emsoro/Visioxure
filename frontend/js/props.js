@@ -275,17 +275,15 @@
       get: (s) => s.y, set: (s, v) => { s.y = v; },
       title: "形状左上角 Y（世界坐标 px）",
     }));
-    // 路径的 subpaths 是局部坐标，改宽高只会挪包围盒，不会缩放图形，故对纯路径隐藏
-    if (!geo.every((s) => s.type === "path")) {
-      wrap.appendChild(numberRow({
-        label: "宽", unit: "px", digits: 1, min: 4, action: "修改尺寸",
-        get: (s) => s.w, set: (s, v) => { s.w = Math.max(4, v); },
-      }));
-      wrap.appendChild(numberRow({
-        label: "高", unit: "px", digits: 1, min: 4, action: "修改尺寸",
-        get: (s) => s.h, set: (s, v) => { s.h = Math.max(4, v); },
-      }));
-    }
+    // 纯路径形状也可改宽高：几何按 path.design 缩放，图形会跟着包围盒一起变
+    wrap.appendChild(numberRow({
+      label: "宽", unit: "px", digits: 1, min: 4, action: "修改尺寸",
+      get: (s) => s.w, set: (s, v) => { s.w = Math.max(4, v); },
+    }));
+    wrap.appendChild(numberRow({
+      label: "高", unit: "px", digits: 1, min: 4, action: "修改尺寸",
+      get: (s) => s.h, set: (s, v) => { s.h = Math.max(4, v); },
+    }));
     wrap.appendChild(numberRow({
       label: "旋转", unit: "°", digits: 1, step: 15, min: -3600, max: 3600, action: "修改旋转",
       get: (s) => (s.angle || 0) * DEG,

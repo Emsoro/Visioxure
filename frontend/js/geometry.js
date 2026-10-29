@@ -1,6 +1,6 @@
 // geometry.js —— 形状多边形化 + Clipper 布尔运算（联合/相交/剪除）（P2）
 // 对齐 CODEPLAN.md §5：矩形/椭圆统一多边形化（椭圆 64 段）后走 Clipper；
-// 结果生成 type=path 形状（子路径局部坐标，原点=包围盒中心），继承底层形状样式
+// 结果生成 type=path 形状（子路径为设计尺寸下的局部坐标，原点=包围盒中心），继承底层形状样式
 "use strict";
 
 (function () {
@@ -12,6 +12,17 @@
     const cos = Math.cos(a), sin = Math.sin(a);
     const dx = x - cx, dy = y - cy;
     return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+  }
+
+  // path 几何的缩放系数：subpaths 记录的是「设计尺寸」下的局部坐标，
+  // 拖拽手柄或改宽高只动 w/h，图形必须按 w/design.w 跟着缩放，
+  // 否则菱形/三角形/梯形这类纯路径形状会出现选框变了、边框没变
+  // 缺 design（旧文件、外来 vsdx、形状库定义）时系数为 1，与改动前行为一致
+  function pathScale(s) {
+    const d = s.path && s.path.design;
+    const dw = d && d.w > 0 ? d.w : s.w;
+    const dh = d && d.h > 0 ? d.h : s.h;
+    return { kx: dw > 0 ? s.w / dw : 1, ky: dh > 0 ? s.h / dh : 1 };
   }
 
   // shape → 世界坐标多边形环数组；不支持布尔的类型返回 null
@@ -32,8 +43,9 @@
       return [pts];
     }
     if (s.type === "path" && s.path && s.path.subpaths) {
-      // 局部坐标（原点=中心）→ 世界
-      return s.path.subpaths.map((ring) => ring.map((p) => rot(cx, cy, a, cx + p.x, cy + p.y)));
+      // 局部坐标（原点=中心）→ 世界，并按包围盒相对设计尺寸缩放
+      const k = pathScale(s);
+      return s.path.subpaths.map((ring) => ring.map((p) => rot(cx, cy, a, cx + p.x * k.kx, cy + p.y * k.ky)));
     }
     return null; // group/connector/image 等不参与布尔
   }
@@ -107,9 +119,9 @@
       x: minX, y: minY,
       w: maxX - minX, h: maxY - minY,
       style: src ? JSON.parse(JSON.stringify(src.style)) : undefined,
-      path: { subpaths, fillRule: "evenodd" },
+      path: { subpaths, fillRule: "evenodd", design: { w: maxX - minX, h: maxY - minY } },
     };
   }
 
-  VX.Geometry = { shapeToRings, booleanRings, booleanShape, rot };
+  VX.Geometry = { shapeToRings, booleanRings, booleanShape, rot, pathScale };
 })();

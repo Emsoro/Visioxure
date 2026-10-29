@@ -395,6 +395,17 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
             if (pathIt != s.end() && pathIt->is_object()) {
                 auto subIt = pathIt->find("subpaths");
                 auto clIt = pathIt->find("closed");
+                // subpaths 是「设计尺寸」下的局部坐标，先按当前包围盒缩放再换算成英寸，
+                // 否则拖拽缩放过的菱形/三角形导出后图形会回到原始大小，与编辑器不一致
+                double dw = pw, dh = ph;
+                auto deIt = pathIt->find("design");
+                if (deIt != pathIt->end() && deIt->is_object()) {
+                    const double a = JNum(*deIt, "w", 0), b = JNum(*deIt, "h", 0);
+                    if (a > 0.001) dw = a;
+                    if (b > 0.001) dh = b;
+                }
+                const double gx = dw > 0.001 ? pw / dw : 1.0;
+                const double gy = dh > 0.001 ? ph / dh : 1.0;
                 const nlohmann::json* closedArr =
                     (clIt != pathIt->end() && clIt->is_array()) ? &*clIt : nullptr;
                 if (subIt != pathIt->end() && subIt->is_array()) {
@@ -405,8 +416,8 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
                         for (const auto& p : ring) {
                             if (!p.is_object()) continue;
                             Pt q;
-                            q.x = (JNum(p, "x", 0) + pw / 2) / kPxPerInch;
-                            q.y = (ph / 2 - JNum(p, "y", 0)) / kPxPerInch;
+                            q.x = (JNum(p, "x", 0) * gx + pw / 2) / kPxPerInch;
+                            q.y = (ph / 2 - JNum(p, "y", 0) * gy) / kPxPerInch;
                             pts.push_back(q);
                         }
                         if (pts.size() >= 2) {

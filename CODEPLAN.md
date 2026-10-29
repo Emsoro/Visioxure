@@ -11,7 +11,7 @@
 **P0–P5 已完整落地可用（含 S2 属性面板），P6（导出）零代码，P7（打磨）未开始。**
 当前产品是「能画流程图、能读写 Visio 文件、能跑原型、属性能精确编辑的编辑器」，但**还交不出去**——没有任何导出能力。
 
-> **2026-10-29 增量**：S2 属性面板已交付（新增 `frontend/js/props.js`），同时修正了三个相关缺陷：面板输入框屏蔽全局快捷键导致 Ctrl+Z 失效、撤销/重做丢失当前页与选中、右侧 6 个 Tab 折行。另修正 `37dfae3` 引入的回归：渲染器改为「有填充才闭合」后，形状库的透明填充多边形（三角形/梯形/菱形/箭头）缺一条闭合边，现改为由 `path.closed[]` 显式声明开合。验收改为 Playwright 脚本化（`test/e2e/`，一条命令跑完 56 项断言），不再依赖人工截图识别。
+> **2026-10-29 增量**：S2 属性面板已交付（新增 `frontend/js/props.js`），同时修正了三个相关缺陷：面板输入框屏蔽全局快捷键导致 Ctrl+Z 失效、撤销/重做丢失当前页与选中、右侧 6 个 Tab 折行。另修正 `37dfae3` 引入的回归：渲染器改为「有填充才闭合」后，形状库的透明填充多边形（三角形/梯形/菱形/箭头）缺一条闭合边，现改为由 `path.closed[]` 显式声明开合。验收改为 Playwright 脚本化（`test/e2e/`，一条命令跑完 56 项断言），不再依赖人工截图识别。随后又修了一个同类的缩放缺陷：菱形/三角形/梯形的几何存在 `path.subpaths`（局部坐标），拖下边手柄只改包围盒、图形照原样画，于是「选框变低了但边框没变」；现把局部坐标归到「设计尺寸 `path.design`」，绘制/命中/多边形化/导出四处统一按 w÷design 缩放（缺省为 1，旧文件与导入的 vsdx 行为不变），属性面板也不再对纯路径隐藏宽高，断言增至 88 项。
 
 计划与实际的 4 处架构偏差：
 
@@ -110,7 +110,8 @@ src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
                  "font": { "family": "Segoe UI", "size": 14, "color": "#333333", "bold": false,
                            "align": "left", "vAlign": "top" } },
       "text": "登录",
-      "path": { "subpaths": [ [ { "x": 0, "y": 0 } ] ], "fillRule": "evenodd", "closed": [true] },  // ✅ 布尔结果/自由路径；closed 可选，缺省=全闭合
+      "path": { "subpaths": [ [ { "x": 0, "y": 0 } ] ], "fillRule": "evenodd", "closed": [true],
+                "design": { "w": 120, "h": 90 } },   // ✅ 布尔结果/自由路径；closed 可选，缺省=全闭合；design 可选=几何的设计尺寸
       "panel": { "states": [ { "id": "st1", "name": "状态 1", "shapes": [] } ], "active": "st1" },  // ✅
       "glue": { "begin": "s0:3", "end": "s1:0" },   // ✅ 锚点序号 0=上 1=右 2=下 3=左
       "route": "ortho",                             // ✅ straight|ortho|curve|manual
@@ -286,9 +287,10 @@ log_error            // 前端诊断
 | 61 | 大文档性能（500+ 形状） | ⬜ | 无缓存/索引 |
 | 62 | 亮 / 暗主题 | ⬜ | 只有单套亮色 |
 | 63 | README / 使用说明 | ✅ | 进度表已与本文件同步（P5 / P5.5 均标 ✅） |
-| 64 | 前端 Playwright 验收脚本（属性面板 + 主干交互 + 子路径闭合） | ✅ | `test/e2e/`，复用本机 Edge，56 项断言 |
+| 64 | 前端 Playwright 验收脚本（属性面板 + 主干交互 + 子路径闭合 + 路径缩放） | ✅ | `test/e2e/`，复用本机 Edge，88 项断言 |
+| 65 | 纯路径形状随包围盒缩放（`path.design`） | ✅ | 拖手柄 / 面板改宽高 / 组缩放 / 布尔输入统一按 w÷design 缩放，导出同步 |
 
-**统计**：✅ 37 项 · ◐ 6 项 · ⬜ 21 项（共 64 项）。
+**统计**：✅ 38 项 · ◐ 6 项 · ⬜ 21 项（共 65 项）。
 
 ---
 
@@ -367,6 +369,7 @@ log_error            // 前端诊断
 | 属性面板与渲染器字段漂移 | 面板字段直接读写 `shape.style`，不引入第二套状态；多选用「多个值」占位；`test/e2e/check_props.js` 逐字段断言写入结果 |
 | 面板/输入框抢占全局快捷键 | 面板输入框只屏蔽非 Ctrl/⌘ 键（Delete/方向键不穿透画布）；`editor.js` 对 `input[type=number]` 只放行 Ctrl+Z/Y |
 | 子路径开合语义被猜错 | 闭合与否不得从「有没有填充」推断（基库多边形就是无填充的闭合环），统一由 `path.closed[]` 声明；reader 从 Visio 几何推导并写出，writer 对开放折线不补回原点的行；`test/e2e/check_stencils.js` 用像素探针双向守住 |
+| 几何坐标系与包围盒分家 | `path.subpaths` 固定为「设计尺寸 `path.design` 下的局部坐标」，缩放系数只由 `Geometry.pathScale` 提供一处；渲染/命中/多边形化/writer 均不得自己算；创建与载入时在 Model 里物化 design（拖到绘制时才取默认值会跟着新 w/h 一起变，缩放永远是 1）；`test/e2e/check_path_resize.js` 同口径守四个消费端 |
 | 参考线等内存态数据丢失 | A5 统一走 `User` 段持久化，并纳入 round-trip 测试 |
 
 ---
@@ -382,5 +385,5 @@ log_error            // 前端诊断
 
 ```powershell
 python -m http.server 8731      # 仓根起静态服务
-node test/e2e/run_all.js        # 属性面板 + 主干交互 + 子路径闭合，56 项断言，退出码非 0 即失败
+node test/e2e/run_all.js        # 属性面板 + 主干交互 + 子路径闭合 + 路径缩放，88 项断言，退出码非 0 即失败
 ```

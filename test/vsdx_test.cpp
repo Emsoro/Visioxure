@@ -125,6 +125,20 @@ json MakeDoc() {
                                             {"subpaths", json::array({openRing})},
                                             {"closed", json::array({false})}}}});
 
+    // 被缩放过的纯路径：design 记下几何的设计尺寸（50x30），包围盒为 100x60，
+    // writer 必须按包围盒把点放大后落盘，否则导出后图形会退回原始大小
+    json tinyRing = json::array();
+    tinyRing.push_back(json{{"x", 0}, {"y", -15}});
+    tinyRing.push_back(json{{"x", 25}, {"y", 0}});
+    tinyRing.push_back(json{{"x", 0}, {"y", 15}});
+    tinyRing.push_back(json{{"x", -25}, {"y", 0}});
+    page["shapes"].push_back(json{{"id", "s10"}, {"type", "path"}, {"x", 100}, {"y", 520}, {"w", 100},
+                                  {"h", 60}, {"angle", 0}, {"z", 10}, {"layer", "l1"}, {"lock", false},
+                                  {"style", style("transparent", "#39434F")},
+                                  {"path", {{"fillRule", "evenodd"},
+                                            {"design", {{"w", 50}, {"h", 30}}},
+                                            {"subpaths", json::array({tinyRing})}}}});
+
     json connector = {{"id", "s5"},
                       {"type", "connector"},
                       {"x", 0},
@@ -584,6 +598,20 @@ int main(int argc, char** argv) {
         Check(p9["path"].contains("closed") && p9["path"]["closed"].is_array() &&
                   p9["path"]["closed"].size() == 1 && p9["path"]["closed"][0] == false,
               "s9 开放标记 closed=false 往返保留");
+    }
+
+    json p10 = FindShape(shapes, "s10");
+    Check(!p10.is_null() && p10.value("type", "") == "path", "s10 读回为 path");
+    if (!p10.is_null() && p10["path"]["subpaths"].size() == 1) {
+        double ex = 0, ey = 0;
+        for (const auto& pt : p10["path"]["subpaths"][0]) {
+            const double ax = std::fabs(pt.value("x", 0.0)), ay = std::fabs(pt.value("y", 0.0));
+            if (ax > ex) ex = ax;
+            if (ay > ey) ey = ay;
+        }
+        // 设计几何 50x30 在 100x60 包围盒下应被放大一倍
+        CheckNear(ex, 50, 0.6, "s10 导出时按包围盒放大了设计几何（X 极值）");
+        CheckNear(ey, 30, 0.6, "s10 导出时按包围盒放大了设计几何（Y 极值）");
     }
 
     json c5 = FindShape(shapes, "s5");
