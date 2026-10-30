@@ -1,4 +1,4 @@
-// app.js —— 入口：模块引导 + Bridge 初始化（P1 起画布逻辑迁至 model/canvas/tools/editor）
+// app.js —— 入口：模块引导（P1 起画布逻辑迁至 model/canvas/tools/editor）
 "use strict";
 
 const $ = (s) => document.querySelector(s);
@@ -7,35 +7,16 @@ const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 // ---------- Bridge ----------
 const bridge = window.__tauricpp__;
 
-async function initBridge() {
-  const el = $("#bridge-status");
-  if (!bridge) {
-    el.textContent = "Bridge: 不可用";
-    el.className = "status-right err";
-    return;
-  }
-
-  // C++ → JS 方向：监听后端 Emit
-  bridge.listen("bridge.greet", (data) => {
-    el.textContent = `Bridge: 双向 OK (v${data.version})`;
-    el.className = "status-right ok";
-    $("#status-msg").textContent = "Bridge 双向通信已建立";
-  });
-
-  // JS → C++ 方向：invoke
+// ---------- 版本号：桌面端以后端 app.get_info 为准（源头是 CMakeLists 的 project(VERSION)），
+// 浏览器直开没有后端时沿用它，静态兜底值在 index.html 里
+async function initVersion() {
+  const el = $("#app-version");
+  if (!el || !bridge) return;
   try {
-    const res = await bridge.invoke("bridge.test", {});
-    if (res.message !== "pong") throw new Error("unexpected response");
-    setTimeout(() => {
-      if (!el.className.includes("ok")) {
-        el.textContent = `Bridge: 单向 OK (v${res.version})`;
-        el.className = "status-right err";
-      }
-    }, 300);
+    const r = await bridge.invoke("app.get_info", {});
+    if (r && r.version) el.textContent = "v" + r.version;
   } catch (e) {
-    el.textContent = "Bridge: 失败";
-    el.className = "status-right err";
-    console.error("bridge.test failed:", e);
+    console.error("app.get_info failed:", e);
   }
 }
 
@@ -134,5 +115,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initPanelTabs();
   initTools();
   initBrandLinks();
-  initBridge();
+  initVersion();
 });

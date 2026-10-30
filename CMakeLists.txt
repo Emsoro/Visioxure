@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 # 版本号唯一来源：exe 版本资源、前端可见版本、VSDX AppVersion 全部由此派生（见 src/version.hpp）
-project(Visioxure VERSION 1.0.0 LANGUAGES C CXX)
+project(Visioxure VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -7,7 +7,7 @@
 #pragma once
 
 #ifndef VISIOXURE_VERSION
-#define VISIOXURE_VERSION "1.0.0"  // 回退值：不经 CMake 手工编译（如单文件调试）时使用
+#define VISIOXURE_VERSION "1.0.1"  // 回退值：不经 CMake 手工编译（如单文件调试）时使用
 #endif
 
 namespace visioxure {

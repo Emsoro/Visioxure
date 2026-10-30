@@ -1,5 +1,6 @@
 // stencils.js —— 形状库（P2）
-// 分类：基本形状 / 流程图 / 交互原型；点击条目在当前视口中心创建
+// 分类：基本形状 / 流程图 / 交互原型；点击条目在当前视口中心创建（连点阶梯错位），
+// 也可以把条目拖到画布上，形状中心落在鼠标释放处
 // path 子路径为局部坐标（原点=形状中心），与 renderer/hit/geometry 约定一致
 // 组合条目的 children 使用「左上角 = 0,0」的局部坐标，插入时整体平移
 "use strict";
@@ -525,28 +526,125 @@
         labelEl.textContent = item.name;
         cell.appendChild(cv);
         cell.appendChild(labelEl);
+        // 按下后可能是点击（居中插入），也可能是拖拽（拖到画布落点插入）：抬起/移动时再判定
+        cell.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();                        // 拖拽时不要顺带选中面板文字
+          press = { item, cell, sx: e.clientX, sy: e.clientY };
+        });
         cell.addEventListener("click", () => {
-          // 在当前视口中心创建（网格吸附）
-          const c = document.getElementById("canvas");
-          const cx = c.clientWidth / 2, cy = c.clientHeight / 2;
-          const wpt = VX.Viewport.s2w(cx, cy);
-          const def = item.def;
-          const x = Math.round((wpt.x - def.w / 2) / VX.state.gridSize) * VX.state.gridSize;
-          const y = Math.round((wpt.y - def.h / 2) / VX.state.gridSize) * VX.state.gridSize;
-          let id;
-          VX.History.run("插入" + item.name, () => {
-            id = VX.Model.addShape(def.type, makeShapeProps(item, x, y)).id;
-          });
-          VX.state.selection = [id];
-          VX.state.enterGroup = null;
-          VX.Events.emit("selection");
-          VX.Renderer.invalidate();
+          if (Date.now() - dragEndedAt < 250) return; // 拖拽结束时的 click 不重复插入
+          insertAtCenter(item);
         });
         grid.appendChild(cell);
       }
       rootEl.appendChild(grid);
     }
   }
+
+  // ---------- 插入：点击居中 / 拖拽到落点 ----------
+  // 连续点击同一个落点时按阶梯错开，避免新形状与上一个完全重叠（错满一轮后回到原位）
+  const CASCADE_STEP = 20;
+  const CASCADE_MAX = 8;
+  const DRAG_THRESHOLD = 4;      // 按下后移动超过这个距离才算拖拽
+  let cascade = null;            // { page, x, y, n } 上一次点击插入的基准落点
+  let press = null;              // 按下的条目（越过阈值前还只是候选点击）
+  let dragDrop = null;           // 拖拽会话 { item, ghost }
+  let dragEndedAt = 0;           // 拖拽结束时刻：用来吞掉紧随其后的 click
+
+  function snapVal(v) {
+    const g = VX.state.gridSize || 10;
+    return Math.round(v / g) * g;
+  }
+
+  function insertAt(item, x, y) {
+    let id;
+    VX.History.run("插入" + item.name, () => {
+      id = VX.Model.addShape(item.def.type, makeShapeProps(item, x, y)).id;
+    });
+    VX.state.selection = [id];
+    VX.state.enterGroup = null;
+    VX.Events.emit("selection");
+    VX.Renderer.invalidate();
+  }
+
+  // 点击插入：落在当前视口中心；同一位置连点时阶梯错位
+  function insertAtCenter(item) {
+    const c = document.getElementById("canvas");
+    const wpt = VX.Viewport.s2w(c.clientWidth / 2, c.clientHeight / 2);
+    const bx = snapVal(wpt.x - item.def.w / 2), by = snapVal(wpt.y - item.def.h / 2);
+    const page = VX.Model.currentPageId();
+    const same = cascade && cascade.page === page && cascade.x === bx && cascade.y === by;
+    const n = same ? (cascade.n + 1) % (CASCADE_MAX + 1) : 0;
+    cascade = { page, x: bx, y: by, n };
+    insertAt(item, bx + CASCADE_STEP * n, by + CASCADE_STEP * n);
+  }
+
+  // 拖拽插入：形状中心对准落点（落点是精确位置，下一次点击从原位重新开始）
+  function insertAtPoint(item, wx, wy) {
+    cascade = null;
+    insertAt(item, snapVal(wx - item.def.w / 2), snapVal(wy - item.def.h / 2));
+  }
+
+  // ---------- 拖拽：缩略图跟随光标，落在画布上才插入 ----------
+  function canvasHit(x, y) {
+    const cv = document.getElementById("canvas");
+    if (!cv) return null;
+    const r = cv.getBoundingClientRect();
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
+    return { x: x - r.left, y: y - r.top };       // 画布内的屏幕坐标
+  }
+
+  function makeGhost(cell) {
+    const g = document.createElement("div");
+    g.className = "stencil-ghost";
+    const src = cell.querySelector("canvas");
+    if (src) {
+      const cv = document.createElement("canvas");
+      cv.width = src.width; cv.height = src.height;
+      cv.getContext("2d").drawImage(src, 0, 0);
+      g.appendChild(cv);
+    }
+    document.body.appendChild(g);
+    return g;
+  }
+
+  function endDrag() {
+    if (!dragDrop) return;
+    if (dragDrop.ghost.parentNode) dragDrop.ghost.parentNode.removeChild(dragDrop.ghost);
+    dragDrop = null;
+    document.body.classList.remove("stencil-dragging");
+    const cv = document.getElementById("canvas");
+    if (cv) cv.classList.remove("stencil-drop");
+  }
+
+  document.addEventListener("mousemove", (e) => {
+    if (!press) return;
+    if (!dragDrop) {
+      if (Math.hypot(e.clientX - press.sx, e.clientY - press.sy) < DRAG_THRESHOLD) return;
+      dragDrop = { item: press.item, ghost: makeGhost(press.cell) };
+      document.body.classList.add("stencil-dragging");
+    }
+    dragDrop.ghost.style.left = e.clientX + "px";
+    dragDrop.ghost.style.top = e.clientY + "px";
+    const cv = document.getElementById("canvas");
+    if (cv) cv.classList.toggle("stencil-drop", !!canvasHit(e.clientX, e.clientY));
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    const d = dragDrop;
+    press = null;
+    if (!d) return;
+    dragEndedAt = Date.now();
+    endDrag();
+    const sc = canvasHit(e.clientX, e.clientY);
+    if (!sc) return;                              // 没落在画布上：放弃插入
+    const w = VX.Viewport.s2w(sc.x, sc.y);
+    insertAtPoint(d.item, w.x, w.y);
+  });
+
+  // 拖到窗口外释放时收尾，避免缩略图残留在屏幕上
+  window.addEventListener("blur", () => { press = null; endDrag(); });
 
   // ---------- 缩略图：按包围盒等比缩放，与插入后的样式一致 ----------
   // 缩略图画布逻辑尺寸（CSS px）；实际像素按 devicePixelRatio 放大，保证高分屏下线条不模糊
