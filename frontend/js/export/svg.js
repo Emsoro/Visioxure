@@ -241,9 +241,22 @@
       return `<g data-vx-id="${esc(s.id)}"${tr}>${body}${a0}${a1}${label}</g>`;
     }
 
-    if (s.type === "group") {
+    if (s.type === "group" || s.type === "instance") {
       let inner = "";
       for (const ch of s.children || []) inner += shapeSvg(ch, ctx);
+      return `<g data-vx-id="${esc(s.id)}"${tr}>${inner}</g>`;
+    }
+
+    // 中继器：按数据集重复渲染模板（子形状是世界坐标，坐标已由 instantiate 平移好）
+    if (s.type === "repeater") {
+      let inner = "";
+      const R = VX.Repeater;
+      if (R) {
+        for (const it of R.items(s)) {
+          const inst = R.instantiate(s.repeater && s.repeater.template, it.row, s.x + it.dx, s.y + it.dy);
+          for (const t of inst) inner += shapeSvg(t, ctx);
+        }
+      }
       return `<g data-vx-id="${esc(s.id)}"${tr}>${inner}</g>`;
     }
 
@@ -255,6 +268,38 @@
       let inner = "";
       for (const ch of (stObj ? stObj.shapes || [] : [])) inner += shapeSvg(ch, ctx);
       return `<g data-vx-id="${esc(s.id)}"${tr}>${inner}</g>`;
+    }
+
+    if (s.type === "image") {
+      // 与 renderer.drawImageContent 同口径：先用 imageFitRect 算目标矩形，
+      // 再在局部坐标里铺图（cover 与圆角用 clipPath 裁剪）
+      const st = s.style || {};
+      const alpha = (st.opacity != null ? st.opacity : 1) * extraAlpha;
+      const hw = s.w / 2, hh = s.h / 2;
+      const t = `translate(${R3(s.x + hw)} ${R3(s.y + hh)})${s.angle ? " rotate(" + R3((s.angle * 180) / Math.PI) + ")" : ""}`;
+      const a = (VX.Images && VX.Images.asset(s.assetId)) || null;
+      const r = Math.min(st.cornerRadius || 0, hw, hh);
+      const clipId = "vxclip-" + String(s.id).replace(/[^\w-]/g, "_");
+      let body = "";
+      if (a && a.dataUrl) {
+        const fr = VX.Renderer.imageFitRect(s.w, s.h, a.w || 1, a.h || 1, s.fit);
+        const needClip = s.fit === "cover" || r > 0.01;
+        const clip = needClip
+          ? `<clipPath id="${clipId}"><path d="${roundRectD(-hw, -hh, s.w, s.h, r)}"/></clipPath>` : "";
+        body = clip +
+          `<image${needClip ? ` clip-path="url(#${clipId})"` : ""} href="${esc(a.dataUrl)}"` +
+          ` x="${R3(fr.x)}" y="${R3(fr.y)}" width="${R3(fr.w)}" height="${R3(fr.h)}"` +
+          ` preserveAspectRatio="none"/>`;
+      } else {
+        // 资产缺失（旧文件 / 解码失败）：灰底占位，避免导出里整块消失
+        body = `<path d="${roundRectD(-hw, -hh, s.w, s.h, r)}" fill="#eef1f5" stroke="#c3cbd6" stroke-width="1"/>`;
+      }
+      let outline = "";
+      if (st.line && st.line !== "transparent" && (st.lineWidth || 0) > 0) {
+        outline = `<path d="${roundRectD(-hw, -hh, s.w, s.h, r)}" fill="none"` +
+          ` stroke="${paint(st.line)}" stroke-width="${R3(st.lineWidth)}"/>`;
+      }
+      return `<g data-vx-id="${esc(s.id)}" transform="${t}"${alpha < 1 ? ` opacity="${R3(alpha)}"` : ""}>${body}${outline}</g>`;
     }
 
     const st = s.style || {};

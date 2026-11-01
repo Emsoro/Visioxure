@@ -9,7 +9,7 @@
   function findShape(arr, id) {
     for (const s of arr || []) {
       if (s.id === id) return s;
-      if (s.type === "group") {
+      if (s.type === "group" || s.type === "instance") {
         const f = findShape(s.children, id);
         if (f) return f;
       }
@@ -27,7 +27,7 @@
   function walk(arr, fn) {
     for (const s of arr || []) {
       fn(s);
-      if (s.type === "group") walk(s.children, fn);
+      if (s.type === "group" || s.type === "instance") walk(s.children, fn);
       if (s.type === "panel") for (const st of (s.panel && s.panel.states) || []) walk(st.shapes, fn);
     }
   }
@@ -46,6 +46,13 @@
       if (!o) { o = {}; overrides.set(id, o); }
       return o;
     };
+
+    // 中继器动作的目标解析：只认 repeater 形状（普通形状不响应这些动作）
+    function repeaterOf(id) {
+      const s = findShape((page() || {}).shapes, id);
+      return s && s.type === "repeater" ? s : null;
+    }
+    function relayoutRepeater(s) { if (VX.Repeater) VX.Repeater.relayout(s); }
 
     function applyDefaults(list, target) {
       for (const v of list || []) {
@@ -168,6 +175,76 @@
           } catch (e) {
             console.warn("runScript 失败:", e);
           }
+          return;
+        }
+        // ---------- 中继器（A2）：数据集增删 / 过滤 / 排序 / 翻页 ----------
+        case "repAddRow": {
+          const r = repeaterOf(a.target);
+          if (!r) return;
+          const rep = r.repeater || (r.repeater = { dataset: [], columns: [], template: [] });
+          if (!Array.isArray(rep.dataset)) rep.dataset = [];
+          let row = {};
+          if (a.row) {
+            try {
+              const parsed = JSON.parse(interpolate(String(a.row)));
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) row = parsed;
+            } catch (e) {
+              console.warn("repAddRow 的行数据不是合法 JSON：", a.row);
+            }
+          }
+          rep.dataset.push(row);
+          relayoutRepeater(r);
+          return;
+        }
+        case "repDelRow": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater || !Array.isArray(r.repeater.dataset)) return;
+          const ds = r.repeater.dataset;
+          // index 从 1 开始；留空/0 表示删除最后一行
+          const n = Number(a.index) || 0;
+          const i = n > 0 ? n - 1 : ds.length - 1;
+          if (i >= 0 && i < ds.length) ds.splice(i, 1);
+          relayoutRepeater(r);
+          return;
+        }
+        case "repFilter": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          rep.view.page = 0;
+          // 列名留空 = 清除过滤
+          rep.view.filter = a.column
+            ? { column: String(a.column), op: a.op || "contains",
+                value: interpolate(a.value != null ? String(a.value) : "") }
+            : null;
+          return;
+        }
+        case "repSort": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          rep.view.page = 0;
+          // 列名留空 = 清除排序
+          rep.view.sort = a.column ? { column: String(a.column), dir: a.dir === "desc" ? "desc" : "asc" } : null;
+          return;
+        }
+        case "repPage": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater || !VX.Repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          const last = Math.max(0, VX.Repeater.visibleRows(rep).pageCount - 1);
+          const cur = Math.min(Math.max(0, Number(rep.view.page) || 0), last);
+          const p = String(a.page == null || a.page === "" ? "next" : a.page).trim().toLowerCase();
+          let next = cur;
+          if (p === "next") next = Math.min(last, cur + 1);
+          else if (p === "prev") next = Math.max(0, cur - 1);
+          else if (p === "first" || p === "reset") next = 0;
+          else if (p === "last") next = last;
+          else next = Math.min(last, Math.max(0, (Number(p) || 1) - 1)); // 数字按 1 基页码
+          rep.view.page = next;
           return;
         }
         default:

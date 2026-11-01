@@ -12,6 +12,8 @@
     ["openLink", "打开链接/跳页"], ["show", "显示"], ["hide", "隐藏"],
     ["setState", "切换面板状态"], ["setText", "设置文本"],
     ["move", "移动"], ["setVar", "设置变量"], ["runScript", "运行脚本"],
+    ["repAddRow", "中继器加行"], ["repDelRow", "中继器删行"],
+    ["repFilter", "中继器过滤"], ["repSort", "中继器排序"], ["repPage", "中继器翻页"],
   ];
 
   function el(tag, cls, text) {
@@ -56,13 +58,13 @@
     return i;
   }
 
-  // 页面内所有形状（含组合/面板状态），用于目标下拉
+  // 页面内所有形状（含组合/实例/面板状态），用于目标下拉
   function allShapes() {
     const out = [];
     const walk = (arr) => {
       for (const s of arr || []) {
         out.push(s);
-        if (s.type === "group") walk(s.children);
+        if (s.type === "group" || s.type === "instance") walk(s.children);
         if (s.type === "panel") for (const st of (s.panel && s.panel.states) || []) walk(st.shapes);
       }
     };
@@ -175,6 +177,78 @@
       ta.addEventListener("change", () => { a.code = ta.value; });
       box.appendChild(ta);
       box.appendChild(el("div", "ip-muted", "脚本内可用 shape / page / vars（预览与导出时执行）"));
+    } else if (a.type.indexOf("rep") === 0) {
+      // 中继器动作：目标固定为中继器形状；列名下拉取自该中继器的数据列
+      const reps = allShapes().filter((s) => s.type === "repeater");
+      const repOpts = [["", "（选择中继器）"]].concat(reps.map((p) => [p.id, shapeLabel(p)]));
+      const r1 = row();
+      r1.appendChild(el("span", "ip-muted", "中继器"));
+      r1.appendChild(select(repOpts, a.target || "", (v) => { a.target = v; a.column = ""; rerender(); }));
+      box.appendChild(r1);
+
+      if (!reps.length) {
+        box.appendChild(el("div", "ip-muted", "页面上还没有中继器，可先从「形状」库拖入一个。"));
+        return box;
+      }
+
+      const rep = reps.find((p) => p.id === a.target) || null;
+      const cols = rep && VX.Repeater ? VX.Repeater.columns(rep.repeater || {}) : [];
+      const colOpts = [["", "（清空/全部）"]].concat(cols.map((c) => [c, c]));
+
+      if (a.type === "repAddRow") {
+        const r2 = row();
+        r2.appendChild(el("span", "ip-muted", "新行"));
+        r2.appendChild(input(a.row || "", (v) => { a.row = v; },
+          'JSON，可留空：{"标题":"新记录"}'));
+        box.appendChild(r2);
+        box.appendChild(el("div", "ip-muted", "留空则追加一条空记录；值里可用 {{变量}} 插值。"));
+      } else if (a.type === "repDelRow") {
+        const r2 = row();
+        r2.appendChild(el("span", "ip-muted", "行号"));
+        r2.appendChild(number(a.index || 0, (v) => { a.index = v; }, "1"));
+        box.appendChild(r2);
+        box.appendChild(el("div", "ip-muted", "行号从 1 开始；留空或 0 表示删除最后一行。"));
+      } else if (a.type === "repFilter") {
+        const r2 = row();
+        r2.appendChild(el("span", "ip-muted", "列"));
+        r2.appendChild(select(colOpts, a.column || "", (v) => { a.column = v; }));
+        r2.appendChild(select([["contains", "包含"], ["equals", "等于"], ["notEquals", "不等于"],
+          ["gt", "大于"], ["lt", "小于"], ["empty", "为空"], ["notEmpty", "不为空"]],
+          a.op || "contains", (v) => { a.op = v; }));
+        box.appendChild(r2);
+        const r3 = row();
+        r3.appendChild(el("span", "ip-muted", "值"));
+        r3.appendChild(input(a.value || "", (v) => { a.value = v; }, "支持 {{变量}}"));
+        box.appendChild(r3);
+        box.appendChild(el("div", "ip-muted", "列名留空 = 清除过滤。"));
+      } else if (a.type === "repSort") {
+        const r2 = row();
+        r2.appendChild(el("span", "ip-muted", "列"));
+        r2.appendChild(select(colOpts, a.column || "", (v) => { a.column = v; }));
+        r2.appendChild(select([["asc", "升序"], ["desc", "降序"]], a.dir || "asc", (v) => { a.dir = v; }));
+        box.appendChild(r2);
+        box.appendChild(el("div", "ip-muted", "列名留空 = 清除排序；数字列按数值比较。"));
+      } else if (a.type === "repPage") {
+        const r2 = row();
+        r2.appendChild(el("span", "ip-muted", "翻到"));
+        r2.appendChild(select([["next", "下一页"], ["prev", "上一页"], ["first", "第一页"],
+          ["last", "最后一页"], ["", "指定页码"]], a.page || "next", (v) => {
+          a.page = v === "" ? "1" : v;
+          rerender();
+        }));
+        box.appendChild(r2);
+        if (!["next", "prev", "first", "last"].includes(a.page)) {
+          const r3 = row();
+          r3.appendChild(el("span", "ip-muted", "页码"));
+          r3.appendChild(input(a.page || "1", (v) => { a.page = v; }, "1", "number"));
+          box.appendChild(r3);
+        }
+        if (rep && rep.repeater && rep.repeater.pageSize) {
+          box.appendChild(el("div", "ip-muted", "每页 " + rep.repeater.pageSize + " 行"));
+        } else {
+          box.appendChild(el("div", "ip-muted", "该中继器未设置「每页行数」，翻页不会生效。"));
+        }
+      }
     }
     return box;
   }

@@ -225,6 +225,55 @@
     c.restore();
   }
 
+  // 图片适应（S3）：contain 等比内嵌 / cover 等比裁剪填满 / fill(stretch) 拉伸
+  function imageFitRect(sw, sh, iw, ih, mode) {
+    const m = mode === "cover" ? "cover" : (mode === "fill" || mode === "stretch") ? "fill" : "contain";
+    if (m === "fill") return { x: -sw / 2, y: -sh / 2, w: sw, h: sh };
+    const k = m === "cover" ? Math.max(sw / iw, sh / ih) : Math.min(sw / iw, sh / ih);
+    const w = iw * k, h = ih * k;
+    return { x: -w / 2, y: -h / 2, w, h };
+  }
+
+  // 图片形状：局部坐标（原点=中心），已由调用方完成平移/旋转/透明度
+  function drawImageContent(c, s, vp, st, opts) {
+    const asset = VX.Images ? VX.Images.asset(s.assetId) : null;
+    const img = asset ? VX.Images.imageOf(asset) : null;
+    const iw = (img && img.naturalWidth) || (asset && asset.w) || Math.max(1, s.w);
+    const ih = (img && img.naturalHeight) || (asset && asset.h) || Math.max(1, s.h);
+    const r = imageFitRect(s.w, s.h, iw, ih, s.fit);
+    const corner = Math.min(st.cornerRadius || 0, s.w / 2, s.h / 2);
+
+    c.save();
+    // cover / 圆角都需要裁剪到形状矩形，否则会画到框外
+    if (s.fit === "cover" || corner > 0.01) {
+      c.beginPath();
+      roundRectPath(c, -s.w / 2, -s.h / 2, s.w, s.h, corner);
+      c.clip();
+    }
+    if (img) {
+      c.drawImage(img, r.x, r.y, r.w, r.h);
+    } else {
+      // 解码完成前 / 资产缺失：画占位块，避免形状整个消失
+      c.fillStyle = "#eef1f5";
+      c.fillRect(-s.w / 2, -s.h / 2, s.w, s.h);
+      c.strokeStyle = "#c3cbd6";
+      c.lineWidth = 1 / (vp.zoom || 1);
+      c.beginPath();
+      c.moveTo(-s.w / 2, -s.h / 2); c.lineTo(s.w / 2, s.h / 2);
+      c.moveTo(s.w / 2, -s.h / 2); c.lineTo(-s.w / 2, s.h / 2);
+      c.stroke();
+    }
+    c.restore();
+
+    if (st.line && st.line !== "transparent" && (st.lineWidth || 0) > 0) {
+      c.strokeStyle = st.line;
+      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom, opts && opts.exported);
+      c.beginPath();
+      roundRectPath(c, -s.w / 2, -s.h / 2, s.w, s.h, corner);
+      c.stroke();
+    }
+  }
+
   // opts: { editor:true, over(shape) → { visible, text, state, dx, dy, opacity } }（预览用）
   function drawShape(c, s, vp, opts) {
     const ov = (opts && opts.over) ? opts.over(s) : null;
@@ -263,6 +312,32 @@
       return;
     }
 
+    // 组件实例（A3）：与组合一样递归绘制快照子形状（子形状是世界坐标）
+    if (s.type === "instance") {
+      for (const ch of s.children || []) drawShape(c, ch, vp, opts);
+      c.restore();
+      return;
+    }
+
+    // 中继器（A2）：按数据集重复绘制模板，文本做 {{列名}} 插值
+    if (s.type === "repeater") {
+      if (opts && opts.editor) {
+        c.strokeStyle = "#c7b8e8";
+        c.lineWidth = 1 / (vp.zoom || 1);
+        c.setLineDash([6 / (vp.zoom || 1), 4 / (vp.zoom || 1)]);
+        c.strokeRect(s.x, s.y, Math.max(1, s.w), Math.max(1, s.h));
+        c.setLineDash([]);
+      }
+      if (VX.Repeater) {
+        for (const it of VX.Repeater.items(s)) {
+          const inst = VX.Repeater.instantiate(s.repeater && s.repeater.template, it.row, s.x + it.dx, s.y + it.dy);
+          for (const t of inst) drawShape(c, t, vp, opts);
+        }
+      }
+      c.restore();
+      return;
+    }
+
     const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
     c.translate(cx, cy);
     if (s.angle) c.rotate(s.angle);
@@ -270,6 +345,12 @@
     const st = s.style || {};
     const baseAlpha = st.opacity != null ? st.opacity : 1;
     c.globalAlpha = baseAlpha * extraAlpha;
+
+    if (s.type === "image") {
+      drawImageContent(c, s, vp, st, opts);
+      c.restore();
+      return;
+    }
 
     // 填充 + 轮廓
     const hasFill = st.fill && st.fill !== "transparent";
@@ -355,7 +436,8 @@
   // 连接点：形状四边中点（与 routing.anchorOf 的 0=上/1=右/2=下/3=左 一致）
   // 显示时机：连接线工具激活（全部形状）/ 单选 / 悬停；吸附点高亮
   function canConnect(s) {
-    return s && s.type !== "connector" && s.type !== "group" && VX.Hit.selectable(s);
+    return s && s.type !== "connector" && s.type !== "group" && s.type !== "instance" &&
+      s.type !== "repeater" && VX.Hit.selectable(s);
   }
 
   function drawConnectionPoints(c, vp) {
@@ -603,6 +685,7 @@
       requestAnimationFrame(tick);
     },
     wrapText,   // 供文本就地编辑测量复用
+    imageFitRect,  // 导出 SVG 复用同一套图片适应计算
 
     // 预览/导出共用：把一页（可带交互覆盖）画到指定 2D 上下文
     // opts: { zoom, ox, oy, grid, over(shape), exported }

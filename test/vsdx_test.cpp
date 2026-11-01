@@ -178,9 +178,48 @@ json MakeDoc() {
                                      {"style", style("#4A90D9", "#2B6CB0")}});
     page["shapes"].push_back(group);
 
+    // 图片（S3）：assets[] + image 形状 → writer 写 Foreign + visio/media，reader 读回
+    const std::string png1x1 =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    json assets = json::array({{{"id", "a1"}, {"name", "像素"}, {"mime", "image/png"}, {"ext", "png"},
+                                {"w", 1}, {"h", 1}, {"dataUrl", png1x1}}});
+    page["shapes"].push_back(json{{"id", "s11"}, {"type", "image"}, {"assetId", "a1"}, {"fit", "cover"},
+                                  {"x", 450}, {"y", 520}, {"w", 120}, {"h", 80}, {"angle", 0}, {"z", 11},
+                                  {"layer", "l1"}, {"lock", false},
+                                  {"style", style("transparent", "transparent")}, {"text", ""}});
+
+    // 中继器（A2）：数据集 / 模板 / 布局 / 分页整体作为 JSON 往返
+    json repTemplate = json::array({
+        json{{"id", "s12a"}, {"type", "rect"}, {"x", 0}, {"y", 0}, {"w", 240}, {"h", 56}, {"text", ""},
+             {"style", style("#FFFFFF", "#E2E5EA")}},
+        json{{"id", "s12b"}, {"type", "text"}, {"x", 12}, {"y", 8}, {"w", 216}, {"h", 20},
+             {"text", "{{标题}}"}, {"style", style("transparent", "transparent")}},
+    });
+    page["shapes"].push_back(json{{"id", "s12"}, {"type", "repeater"},
+                                  {"x", 40}, {"y", 700}, {"w", 260}, {"h", 192}, {"angle", 0}, {"z", 12},
+                                  {"layer", "l1"}, {"lock", false},
+                                  {"style", style("transparent", "transparent")}, {"text", ""},
+                                  {"repeater", {{"columns", json::array({"标题", "说明"})},
+                                                {"dataset", json::array({{{"标题", "列表项一"}, {"说明", "说明"}}})},
+                                                {"layout", {{"mode", "vertical"}, {"gap", 8}, {"rowHeight", 64}}},
+                                                {"pageSize", 3},
+                                                {"template", repTemplate}}}});
+
+    // 组件实例（A3）：VSDX 里按组合摊平（母版不写回），读回是等价的 group
+    page["shapes"].push_back(json{{"id", "s13"}, {"type", "instance"}, {"masterId", "m1"},
+                                  {"x", 600}, {"y", 780}, {"w", 160}, {"h", 60}, {"angle", 0}, {"z", 13},
+                                  {"layer", "l1"}, {"lock", false},
+                                  {"style", style("#FFFFFF", "#2B2A4C")}, {"text", ""},
+                                  {"children", json::array({
+                                      json{{"id", "s13a"}, {"type", "rect"}, {"x", 600}, {"y", 780},
+                                           {"w", 160}, {"h", 60}, {"text", ""},
+                                           {"style", style("#FFFFFF", "#2B2A4C")}},
+                                  })}});
+
     return json{{"format", "visioxure"},
                 {"version", 1},
                 {"doc", {{"theme", "light"}, {"variables", json::array()}}},
+                {"assets", assets},
                 {"pages", json::array({page})}};
 }
 
@@ -469,7 +508,7 @@ int main(int argc, char** argv) {
             std::printf("READ FAIL: %s\n", err.c_str());
             return 1;
         }
-        std::printf("pages=%zu\n", doc["pages"].size());
+        std::printf("pages=%zu assets=%zu\n", doc["pages"].size(), doc.value("assets", json::array()).size());
         std::vector<std::pair<json, int>> stack;
         for (const auto& p : doc["pages"]) {
             std::printf("page '%s' size=%.0fx%.0f layers=%zu\n", p.value("name", "").c_str(),
@@ -534,10 +573,16 @@ int main(int argc, char** argv) {
         Check(pkg.Has("visio/pages/pages.xml"), "包含 visio/pages/pages.xml");
         Check(pkg.Has("visio/pages/page1.xml"), "包含 visio/pages/page1.xml");
         Check(pkg.Has("visio/pages/_rels/pages.xml.rels"), "包含 pages.xml.rels");
+        Check(pkg.Has("visio/pages/_rels/page1.xml.rels"), "包含 page1.xml.rels（图片关系）");
+        Check(pkg.Has("visio/media/image1.png"), "包含 visio/media 图片本体");
         Check(pkg.Has("docProps/core.xml"), "包含 docProps/core.xml");
         Check(pkg.FindOr("[Content_Types].xml").find("application/vnd.ms-visio.page+xml") != std::string::npos,
               "Content_Types 声明 page ContentType");
+        Check(pkg.FindOr("[Content_Types].xml").find("image/png") != std::string::npos,
+              "Content_Types 声明 png 扩展名");
         std::string pageXml = pkg.FindOr("visio/pages/page1.xml");
+        Check(pageXml.find("Type=\"Foreign\"") != std::string::npos, "page1 含 Foreign 图片形状");
+        Check(pageXml.find("<ForeignData") != std::string::npos, "page1 含 ForeignData");
         Check(pageXml.find("<PageContents") != std::string::npos, "page1 根元素为 PageContents");
         Check(pageXml.find("登录") != std::string::npos, "page1 含中文文本");
         Check(pageXml.find("PinX") != std::string::npos, "page1 含 PinX 坐标");
@@ -618,6 +663,46 @@ int main(int argc, char** argv) {
         // 设计几何 50x30 在 100x60 包围盒下应被放大一倍
         CheckNear(ex, 50, 0.6, "s10 导出时按包围盒放大了设计几何（X 极值）");
         CheckNear(ey, 30, 0.6, "s10 导出时按包围盒放大了设计几何（Y 极值）");
+    }
+
+    json im11 = FindShape(shapes, "s11");
+    Check(!im11.is_null() && im11.value("type", "") == "image", "s11 读回为 image");
+    if (!im11.is_null()) {
+        Check(im11.value("fit", "") == "cover", "s11 图片适应方式保持 cover");
+        CheckNear(im11.value("x", 0.0), 450, 0.5, "s11 x 往返一致");
+        CheckNear(im11.value("w", 0.0), 120, 0.5, "s11 w 往返一致");
+        Check(!im11.value("assetId", "").empty(), "s11 关联到资产");
+    }
+    Check(parsed["assets"].size() == 1, "资产表读回 1 张图");
+    if (parsed["assets"].size() == 1) {
+        Check(parsed["assets"][0].value("mime", "") == "image/png", "资产 mime 为 image/png");
+        Check(parsed["assets"][0].value("dataUrl", "").rfind("data:image/png;base64,", 0) == 0,
+              "资产 dataUrl 前缀正确");
+        CheckNear(parsed["assets"][0].value("w", 0.0), 1, 0.5, "资产像素宽读回");
+    }
+
+    // 中继器（A2）往返：类型 + 数据集 + 模板 + 布局 + 分页
+    json rep12 = FindShape(shapes, "s12");
+    Check(!rep12.is_null() && rep12.value("type", "") == "repeater", "s12 读回为 repeater");
+    if (!rep12.is_null() && rep12.contains("repeater")) {
+        const json& rep = rep12["repeater"];
+        Check(rep.value("pageSize", 0) == 3, "s12 分页大小往返");
+        Check(rep.contains("dataset") && rep["dataset"].size() == 1, "s12 数据集往返");
+        if (rep.contains("dataset") && rep["dataset"].size() == 1) {
+            Check(rep["dataset"][0].value("标题", "") == "列表项一", "s12 数据列值往返");
+        }
+        Check(rep.contains("template") && rep["template"].size() == 2, "s12 模板 2 个形状往返");
+        if (rep.contains("template") && rep["template"].size() == 2) {
+            Check(rep["template"][1].value("text", "") == "{{标题}}", "s12 模板占位文本往返");
+        }
+        Check(rep.contains("layout") && rep["layout"].value("rowHeight", 0) == 64, "s12 行高往返");
+    }
+
+    // 组件实例（A3）：写回时摊平成组合，读回为等价 group（内容不丢）
+    json inst13 = FindShape(shapes, "s13");
+    Check(!inst13.is_null() && inst13.value("type", "") == "group", "s13 实例摊平为 group");
+    if (!inst13.is_null() && inst13.contains("children")) {
+        Check(inst13["children"].size() == 1, "s13 实例子形状往返");
     }
 
     json c5 = FindShape(shapes, "s5");

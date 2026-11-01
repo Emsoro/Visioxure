@@ -13,6 +13,8 @@
     "js/model.js",
     "js/geometry.js",
     "js/routing.js",
+    "js/images.js",
+    "js/repeater.js",
     "js/canvas/hit.js",
     "js/canvas/renderer.js",
     "js/interact.js",
@@ -40,15 +42,28 @@
   // 保证「渲染看到的形状」与「交互改写的形状」是同一批对象
   VX.Model.doc.pages = docData.pages;
   VX.Model.doc.doc = docData.doc || VX.Model.doc.doc;
+  // 图片资产与组件母版：渲染中继器/图片时要查 doc.assets，A3 实例的母版信息也在这里
+  VX.Model.doc.assets = docData.assets || [];
+  VX.Model.doc.library = docData.library || [];
   var rt = VX.Interact.create(docData);
   VX.Model.doc.pages = rt.doc.pages;
   VX.Model.doc.doc = rt.doc.doc;
+  VX.Model.doc.assets = rt.doc.assets || VX.Model.doc.assets;
+  VX.Model.doc.library = rt.doc.library || VX.Model.doc.library;
 
   var view = { zoom: 1, ox: 0, oy: 0 };
   var canvas = document.getElementById("vx-canvas");
   var stage = document.getElementById("vx-stage");
   var c = canvas.getContext("2d");
   var hoverId = null, dirty = true, raf = 0, lastT = 0;
+
+  // 图片资产解码是异步的：解码完成后标脏重绘，否则导出页首帧只剩灰底占位块
+  (docData.assets || []).forEach(function (a) {
+    if (!a || !a.dataUrl) return;
+    var im = new Image();
+    im.onload = function () { dirty = true; };
+    im.src = a.dataUrl;
+  });
 
   function pageName() { var p = rt.page(); return p ? p.name : ""; }
 

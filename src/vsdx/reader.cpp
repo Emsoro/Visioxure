@@ -4,7 +4,10 @@
 #include "package.hpp"
 #include "xml.hpp"
 
+#include "../exporter.hpp"
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -573,7 +576,8 @@ Pt ToPage(const Xform& parent, const Pt& local) {
 nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& parent, double pageH,
                          const std::map<int, std::string>& palette, const StyleMap& styles,
                          const std::map<int, std::string>& layerByIndex, std::vector<std::string>& warnings,
-                         const std::string& pageName, const MasterMap& masters) {
+                         const std::string& pageName, const MasterMap& masters,
+                         const std::map<std::string, std::string>& imageRels, nlohmann::json& assets) {
     // 页面形状自身宽高：真实 Visio 文件常省略 Width/Height（F="Inh" 由母版继承），
     // 1-D 形状反向时又会写成负值，内部模型统一存正值
     std::map<std::string, std::string> pageCells = ReadCells(sh);
@@ -680,6 +684,20 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
     }
 
     std::string userType = UserValue(sh, "VXType");
+    // 图片（S3）：Visio 的 Foreign 形状用 ForeignData/Rel 指向本页 rels 里的图片
+    std::string imageRid;
+    if (const XmlNode* fd = sh.child("ForeignData")) {
+        if (const XmlNode* rel = fd->child("Rel")) {
+            imageRid = rel->attr("r:id");
+            if (imageRid.empty()) imageRid = rel->attr("id");
+        }
+    }
+    std::string imageAssetId;
+    if (!imageRid.empty()) {
+        auto irIt = imageRels.find(imageRid);
+        if (irIt != imageRels.end()) imageAssetId = irIt->second;
+    }
+    if (!imageAssetId.empty()) userType = "image";
     if (userType.empty() && cells.count("BeginX") && cells.count("EndX")) userType = "connector";  // 原生 1-D 形状
     std::string kind = DetectType(userType, src, geo, cells, text, wIn, hIn);
 
@@ -770,6 +788,26 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
                             {"angle", -totalAngle}, {"z", 0}, {"layer", "l1"}, {"lock", false},
                             {"style", style}};
     if (!text.empty()) shape["text"] = text;
+
+    if (kind == "image" && !imageAssetId.empty()) {
+        shape["assetId"] = imageAssetId;
+        std::string fit = UserValue(sh, "VXFit");
+        shape["fit"] = (fit == "cover" || fit == "fill" || fit == "stretch") ? fit : "contain";
+        // 图片的填充/描边由渲染器接管：内部模型保持透明，避免把 Foreign 的填充色画上去
+        style["fill"] = "transparent";
+        style["line"] = "transparent";
+        shape["style"] = style;
+        // 原图像素尺寸（本应用写出的 VXImgW/H）：解码前也能按正确宽高比摆放
+        for (auto& a : assets) {
+            if (a.value("id", std::string()) != imageAssetId) continue;
+            if (a.value("w", 0.0) <= 0) {
+                std::string vw = UserValue(sh, "VXImgW"), vh = UserValue(sh, "VXImgH");
+                if (!vw.empty()) a["w"] = P2D(vw, 0);
+                if (!vh.empty()) a["h"] = P2D(vh, 0);
+            }
+            break;
+        }
+    }
 
     if (kind == "connector") {
         bool hasBegin = cells.count("BeginX") && cells.count("BeginY");
@@ -906,6 +944,17 @@ nlohmann::json ParseLeaf(const XmlNode& sh, const std::string& id, const Xform& 
             }
         }
     }
+    // 中继器（A2）：数据集 / 模板 / 布局整段存于 VXRepeater
+    if (userType == "repeater") {
+        std::string repRaw = UserValue(sh, "VXRepeater");
+        if (!repRaw.empty()) {
+            try {
+                nlohmann::json rj = nlohmann::json::parse(repRaw);
+                if (rj.is_object()) shape["repeater"] = rj;
+            } catch (...) {
+            }
+        }
+    }
 
     // P5：注释 / 链接 / 脚本（本应用写入的 User 段）
     nlohmann::json meta = nlohmann::json::object();
@@ -931,10 +980,12 @@ nlohmann::json ParseNode(const XmlNode& sh, const std::string& id, const Xform& 
                          const std::map<int, std::string>& palette, const StyleMap& styles,
                          const std::map<int, std::string>& layerByIndex, std::vector<std::string>& warnings,
                          const std::string& pageName, const std::map<int, std::string>& idMap,
-                         const MasterMap& masters) {
+                         const MasterMap& masters,
+                         const std::map<std::string, std::string>& imageRels, nlohmann::json& assets) {
     const XmlNode* inner = sh.child("Shapes");
     if (sh.attr("Type") != "Group" || !inner) {
-        return ParseLeaf(sh, id, parent, pageH, palette, styles, layerByIndex, warnings, pageName, masters);
+        return ParseLeaf(sh, id, parent, pageH, palette, styles, layerByIndex, warnings, pageName, masters,
+                         imageRels, assets);
     }
 
     std::map<std::string, std::string> cells = ReadCells(sh);
@@ -954,7 +1005,7 @@ nlohmann::json ParseNode(const XmlNode& sh, const std::string& id, const Xform& 
         int numeric = static_cast<int>(P2D(ch->attr("ID"), 0));
         std::string cid = idMap.count(numeric) ? idMap.at(numeric) : ("s" + std::to_string(numeric));
         children.push_back(ParseNode(*ch, cid, self, pageH, palette, styles, layerByIndex, warnings, pageName, idMap,
-                                     masters));
+                                     masters, imageRels, assets));
     }
     if (children.empty()) return nlohmann::json::object();
 
@@ -1000,7 +1051,8 @@ void ReadPageUserVars(const XmlNode& pageNode, nlohmann::json& pageVars, nlohman
 
 nlohmann::json ParsePage(const XmlNode& pageRoot, const std::string& pageName, double& outW, double& outH,
                          const std::map<int, std::string>& palette, const StyleMap& styles,
-                         const MasterMap& masters, std::vector<std::string>& warnings) {
+                         const MasterMap& masters, std::vector<std::string>& warnings,
+                         const std::map<std::string, std::string>& imageRels, nlohmann::json& assets) {
     double pageW = outW, pageH = outH;
     const XmlNode* sheet = pageRoot.child("PageSheet");
     if (sheet) {
@@ -1087,7 +1139,7 @@ nlohmann::json ParsePage(const XmlNode& pageRoot, const std::string& pageName, d
             int numeric = static_cast<int>(P2D(sh->attr("ID"), 0));
             std::string id = idMap.count(numeric) ? idMap.at(numeric) : ("s" + std::to_string(numeric));
             nlohmann::json node = ParseNode(*sh, id, Xform{}, pageH, palette, styles, layerByIndex, warnings,
-                                            pageName, idMap, masters);
+                                            pageName, idMap, masters, imageRels, assets);
             if (node.is_object() && !node.empty()) pageShapes.push_back(node);
         }
     } else {
@@ -1104,7 +1156,7 @@ nlohmann::json ParsePage(const XmlNode& pageRoot, const std::string& pageName, d
         int numeric = static_cast<int>(P2D(sh->attr("ID"), 0));
         std::string id = idMap.count(numeric) ? idMap[numeric] : ("s" + std::to_string(numeric));
         nlohmann::json shape = ParseLeaf(*sh, id, Xform{}, pageH, palette, styles, layerByIndex, warnings, pageName,
-                                         masters);
+                                         masters, imageRels, assets);
         flats.push_back({shape, UserValue(*sh, "VXGroup")});
     }
 
@@ -1317,6 +1369,18 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
 
     nlohmann::json pages = nlohmann::json::array();
 
+    // 图片资产（S3）：页面 rels → visio/media/* → dataURL；同一张图跨页/多次引用只存一份
+    nlohmann::json assets = nlohmann::json::array();
+    std::map<std::string, std::string> dataUrlToAsset;
+
+    auto mimeOfExt = [](const std::string& ext) -> std::string {
+        if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+        if (ext == "gif") return "image/gif";
+        if (ext == "webp") return "image/webp";
+        if (ext == "svg") return "image/svg+xml";
+        return "image/png";
+    };
+
     // 背景页（Background='1'）不作为独立页面导入
     std::vector<const XmlNode*> pageNodes;
     for (const XmlNode* p : pagesRoot.childrenNamed("Page")) {
@@ -1346,13 +1410,42 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
             continue;
         }
 
+        // 本页图片关系：rId → 资产 id
+        std::map<std::string, std::string> pageImageRels;
+        for (const auto& r : pkg.Rels(target)) {
+            if (r.type.find("relationships/image") == std::string::npos) continue;
+            const std::string* bytes = pkg.Find(r.target);
+            if (!bytes || bytes->empty()) {
+                warnings.push_back(name + " 图片缺失: " + r.target);
+                continue;
+            }
+            std::size_t dot = r.target.find_last_of('.');
+            std::string ext = dot == std::string::npos ? "png" : r.target.substr(dot + 1);
+            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            std::string dataUrl = "data:" + mimeOfExt(ext) + ";base64," + vxex::EncodeBase64(*bytes);
+            std::string aid = dataUrlToAsset.count(dataUrl) ? dataUrlToAsset[dataUrl] : "";
+            if (aid.empty()) {
+                aid = "a" + std::to_string(assets.size() + 1);
+                assets.push_back({{"id", aid},
+                                  {"name", "图片-" + std::to_string(assets.size() + 1)},
+                                  {"mime", mimeOfExt(ext)},
+                                  {"ext", ext},
+                                  {"w", 0},
+                                  {"h", 0},
+                                  {"dataUrl", dataUrl}});
+                dataUrlToAsset[dataUrl] = aid;
+            }
+            pageImageRels[r.id] = aid;
+        }
+
         double pw = 800, ph = 1100;
         std::string pageBg = "#FFFFFF";
         ReadPageSheet(*pageNode, pw, ph, pageBg); // 真实 Visio 文件只在 pages.xml 声明页面属性
         nlohmann::json pageVars = nlohmann::json::array();
         std::string gridKind;   // 空 = 文件里没声明，交给前端回退小网格
         ReadPageUserVars(*pageNode, pageVars, globalVars, gridKind);
-        nlohmann::json parsed = ParsePage(pageRoot, name, pw, ph, palette, styles, masters, warnings);
+        nlohmann::json parsed = ParsePage(pageRoot, name, pw, ph, palette, styles, masters, warnings,
+                                          pageImageRels, assets);
 
         nlohmann::json page = {
             {"id", "p" + std::to_string(pages.size() + 1)},
@@ -1377,7 +1470,7 @@ bool ParseVsdxBytes(const std::string& bytes, nlohmann::json& out, std::vector<s
     out = {{"format", "visioxure"},
            {"version", 1},
            {"doc", {{"theme", "light"}, {"variables", globalVars}}},
-           {"assets", nlohmann::json::array()},
+           {"assets", assets},
            {"library", nlohmann::json::array()},
            {"pages", pages}};
     return true;

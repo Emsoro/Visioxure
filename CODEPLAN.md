@@ -2,16 +2,16 @@
 
 > Visio + Axure 结合体：Visio 式图形绘制与连接线，Axure 式交互原型；保存为 `.vsdx`，可导出 **HTML / PNG / PDF / SVG**；元素可配置 **注释 / 链接 / 脚本**；支持图片、多页面树、组件库（母版+实例）、迭代器（Repeater）、组合/解组与布尔运算（联合/相交/剪除）。
 >
-> **本版说明**：2026-10-29 对仓库 v1.0.0（commit `37dfae3`）逐模块核对后重写。§2 架构改为「实际落地结构」，§6 用 ✅/◐/⬜ 标注完成度，§7 把缺失功能按重要程度重新排队。原计划中「待建但从未创建」的目录（`src/document.*`、`src/exporter.*`、`frontend/js/panels/`、`frontend/js/tools/`、`frontend/js/export/`）已从架构图中移除，改为「目标结构」表格中的规划项。
+> **本版说明**：2026-10-29 对仓库 v1.0.0（commit `37dfae3`）逐模块核对后重写。§2 架构改为「实际落地结构」，§6 用 ✅/◐/⬜ 标注完成度，§7 把缺失功能按重要程度重新排队。2026-11-01 补记 P6.5（S3 图片 / A2 中继器 / A3 组件库）落地后的模块与完成度。
 
 ---
 
 ## 0. 核对结论（一句话版）
 
-**P0–P5 已完整落地可用（含 S2 属性面板），P6（导出）S1 已交付（PNG/SVG/HTML/PDF 四种），P7（打磨）未开始。**
-当前产品能画流程图、读写 Visio 文件、跑原型、属性能精确编辑，**且能交得出去**——一级菜单「导出」（在「文件」右侧）可出 PNG/SVG（当前页）与 HTML/PDF（整个工程）；多页 zip 打包、图片插入等仍在 §7。
+**P0–P6.5 已完整落地可用（含 S2 属性面板、P6-S1 导出、S3 图片、A2 中继器、A3 组件库），P7（打磨）未开始。**
+当前产品能画流程图、读写 Visio 文件、跑原型、属性能精确编辑、插入图片、做可重复列表与可复用组件，**且能交得出去**——一级菜单「导出」（在「文件」右侧）可出 PNG/SVG（当前页）与 HTML/PDF（整个工程）；多页 zip 打包仍在 §7。
 
-> **2026-10-29 增量**：S2 属性面板已交付（新增 `frontend/js/props.js`），同时修正了三个相关缺陷：面板输入框屏蔽全局快捷键导致 Ctrl+Z 失效、撤销/重做丢失当前页与选中、右侧 6 个 Tab 折行。另修正 `37dfae3` 引入的回归：渲染器改为「有填充才闭合」后，形状库的透明填充多边形（三角形/梯形/菱形/箭头）缺一条闭合边，现改为由 `path.closed[]` 显式声明开合。验收改为 Playwright 脚本化（`test/e2e/`，一条命令跑完 56 项断言），不再依赖人工截图识别。随后又修了一个同类的缩放缺陷：菱形/三角形/梯形的几何存在 `path.subpaths`（局部坐标），拖下边手柄只改包围盒、图形照原样画，于是「选框变低了但边框没变」；现把局部坐标归到「设计尺寸 `path.design`」，绘制/命中/多边形化/导出四处统一按 w÷design 缩放（缺省为 1，旧文件与导入的 vsdx 行为不变），属性面板也不再对纯路径隐藏宽高，断言增至 88 项。
+> **2026-10-29 增量**：S2 属性面板已交付（新增 `frontend/js/props.js`），同时修正了三个相关缺陷：面板输入框屏蔽全局快捷键导致 Ctrl+Z 失效、撤销/重做丢失当前页与选中、右侧 6 个 Tab 折行。另修正 `37dfae3` 引入的回归：渲染器改为「有填充才闭合」后，形状库的透明填充多边形（三角形/梯形/菱形/箭头）缺一条闭合边，现改为由 `path.closed[]` 显式声明开合。验收改为 Playwright 脚本化（`test/e2e/`，一条命令跑完 56 项断言），不再依赖人工截图识别。随后又修了一个同类的缩放缺陷：菱形/三角形/梯形的几何存在 `path.subpaths`（局部坐标），拖下边手柄只改包围盒、图形照原样画，于是「选框变低了但边框没变」；现把局部坐标归到「设计尺寸 `path.design`」，绘制/命中/多边形化/导出四处统一按 w÷design 缩放（缺省为 1，旧文件与导入的 vsdx 行为不变），属性面板也不再对纯路径隐藏宽高，断言增至 88 项（P6.5 交付后为 180 项）。
 
 计划与实际的 4 处架构偏差：
 
@@ -19,8 +19,8 @@
 |---|---|---|---|
 | 后端文档模型 | `src/document.hpp/.cpp`（JSON 校验/迁移） | 不存在；校验仅在前端 `Model.load`（只查 `format`） | 版本迁移无落点，坏文件靠前端 try/catch |
 | 导出层 | `frontend/js/export/{html,svg,pdf}.js` + `src/exporter.*` | 已建：`export/{png,svg,pdf,html}.js` + `exporter.js` + `src/exporter.{cpp,hpp}` | P6-S1 已交付（见 §7-S1）；多页 zip 打包顺延 A1 |
-| 前端目录 | `panels/`、`tools/`、`images.js`、`library.js`、`canvas/{handles,ruler}.js` | 扁平 21 个文件；手柄在 `overlay.js`+`tools.js`，标尺在 `overlay.js` | 目录更扁平，可维护性尚可，不强求拆分 |
-| Bridge | 9 条（含 `export.write`、`app.close_confirm`） | 11 条（新增 `export.write`；多了 `bridge.test`/`app.get_info`/`app.open_url`，仍缺 `app.close_confirm`） | 导出落盘已接；关窗拦截无后端入口 |
+| 前端目录 | `panels/`、`tools/`、`images.js`、`library.js`、`canvas/{handles,ruler}.js` | 扁平 29 个前端文件；手柄在 `overlay.js`+`tools.js`，标尺在 `overlay.js` | 目录更扁平，可维护性尚可，不强求拆分 |
+| Bridge | 9 条（含 `export.write`、`app.close_confirm`） | 12 条（新增 `export.write`、`file.open_image`；多了 `bridge.test`/`app.get_info`/`app.open_url`，仍缺 `app.close_confirm`） | 导出落盘已接；关窗拦截无后端入口 |
 
 ---
 
@@ -49,11 +49,11 @@
 
 **职责边界（已落地，不再调整）**
 
-- 前端：文档模型、渲染、命中、工具、布线、面板、交互运行时、**导出产物生成（待做）**。
-- 后端：无状态。只做 `.vsdx` 编解码、原生对话框、最近文件、标题、写盘（待加 `export.write`）。
+- 前端：文档模型、渲染、命中、工具、布线、面板、交互运行时、导出产物生成。
+- 后端：无状态。只做 `.vsdx` 编解码、原生对话框、最近文件、标题、写盘（`export.write`）。
 - 数据交换：`vsdx.save {path, doc}` / `vsdx.load {path} → {doc, warnings}`，格式即 §3 的 JSON。
 
-**实际模块清单（21 个前端文件 / 9 个后端文件）**
+**实际模块清单（29 个前端文件 / 12 个后端文件）**
 
 | 层 | 文件 | 职责 |
 |---|---|---|
@@ -64,26 +64,20 @@
 | 渲染 | `frontend/js/canvas/renderer.js` | `drawScene`、形状/文本换行/虚线/箭头字形、`invalidate` 脏标记 |
 | 渲染 | `frontend/js/canvas/overlay.js` | 选区手柄、连接点、对齐线、标尺绘制 |
 | 渲染 | `frontend/js/canvas/hit.js` | 命中测试（AABB/旋转/线段/参考线），图层显隐锁定过滤 |
+| 资源 | `frontend/js/images.js` | 图片资产：导入/解码缓存/hash 去重/`fit` 计算 |
+| 资源 | `frontend/js/repeater.js` | 中继器：数据集/模板/布局/`{{列名}}` 插值/过滤排序分页 |
 | 交互 | `frontend/js/tools.js` | 选择/创建/文本/连接线工具、吸附、就地编辑、端点与线段拖拽 |
 | 交互 | `frontend/js/editor.js` | 画布鼠标、快捷键、页面树、排列工具条、图层面板、参考线 |
-| 面板 | `props.js` / `style.js` / `inspect.js` / `meta.js` / `page.js` / `colorpicker.js` / `stencils.js` | 属性（几何+文本样式）/ 线条样式 / 交互 / 注释 / 页面 / 调色板 / 形状库 |
-| 运行时 | `interact.js` + `preview.js` | 事件→动作、变量作用域、动画、F5 全屏预览 |
-| IO | `fileio.js` + `app.js` | Bridge 封装、新建/打开/保存、最近文件、菜单、快捷键 |
-| 后端 | `src/main.cpp` | 窗口 + 10 条 Bridge 命令 + 最近文件 |
+| 面板 | `props.js` / `style.js` / `inspect.js` / `meta.js` / `page.js` / `colorpicker.js` / `stencils.js` | 属性（几何+文本样式+图片+中继器）/ 线条样式 / 交互 / 注释 / 页面 / 调色板 / 形状库 |
+| 面板 | `frontend/js/library.js` | 组件库：母版、实例插入、解除链接、嵌套环检测 |
+| 运行时 | `interact.js` + `preview.js` | 事件→动作（14 种）、变量作用域、动画、F5 全屏预览 |
+| 导出 | `frontend/js/export/{png,svg,pdf,html}.js` | 当前页 PNG / 形状→SVG / 极简 PDF / 自包含 HTML（运行时内联） |
+| IO | `fileio.js` + `app.js` + `exporter.js` | Bridge 封装、新建/打开/保存、最近文件、菜单、快捷键、导出落盘 |
+| 后端 | `src/main.cpp` | 窗口 + 12 条 Bridge 命令 + 最近文件 |
 | 后端 | `src/vsdx/{package,reader,writer,xml}.cpp` | OPC 包、VisioML 读写、XML 轻量解析 |
+| 后端 | `src/exporter.{cpp,hpp}` | `export.write`：写文件夹 / miniz 打 zip |
 
-**目标结构（仅列尚未创建、且已确认要做的）**
-
-```
-frontend/js/export/html.js    # 文档 → 自包含 HTML（交互运行时内联）
-frontend/js/export/svg.js     # 形状 → SVG（HTML 导出与独立 .svg 共用）
-frontend/js/export/pdf.js     # 极简 PDF writer（JPEG + DCTDecode）
-frontend/js/images.js         # 图片资产：导入/hash 去重/SVG 尺寸探测
-frontend/js/library.js        # 组件库（母版/实例/解除链接/环检测）
-src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
-```
-
-> `frontend/js/props.js` 已从本表移入上表（S2 已实现）。
+> §2 早期版本列出的「目标结构（尚未创建）」已全部落地：`frontend/js/export/*.js`、`images.js`、`library.js`、`repeater.js`、`src/exporter.cpp`。
 
 ---
 
@@ -101,7 +95,7 @@ src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
     "layers": [ { "id": "l1", "name": "默认", "visible": true, "locked": false } ],  // ✅
     "guides": [ { "dir": "v", "pos": 120 } ],   // ◐ 仅内存，未写入 vsdx
     "shapes": [{
-      "id": "s1", "type": "rect",      // ✅ rect|ellipse|text|path|connector|group|panel|image(未实现)|instance(未实现)|repeater(未实现)
+      "id": "s1", "type": "rect",      // ✅ rect|ellipse|text|path|connector|group|panel|image|instance|repeater
       "x": 100, "y": 80, "w": 200, "h": 48, "angle": 0, "z": 3, "layer": "l1", "lock": false,
       "style": { "fill": "#4A90D9", "line": "#2B6CB0", "lineWidth": 1.5, "cornerRadius": 6, "opacity": 1,
                  "dash": "dash", "linePattern": 2,          // ✅ 新增：虚线（Visio LinePattern 映射）
@@ -118,13 +112,23 @@ src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
       "points": [ { "x": 0, "y": 0 } ],             // ✅ route=manual 时的用户折线
       "meta": { "notes": "…", "links": [ { "label": "文档", "url": "https://…" } ],
                 "scripts": [ { "name": "校验", "event": "click", "code": "…" } ] },   // ✅
-      "interactions": [ { "event": "click", "actions": [ { "type": "openLink", "target": "p2" } ] } ]  // ✅
+      "interactions": [ { "event": "click", "actions": [ { "type": "openLink", "target": "p2" } ] } ],  // ✅
+      "assetId": "a1", "fit": "contain",   // ✅ 图片（S3）：资产引用 + 适应方式
+      "repeater": { "columns": ["标题"], "dataset": [ { "标题": "第一项" } ],
+                    "layout": { "mode": "vertical", "gap": 8, "rowHeight": 64 },
+                    "pageSize": 0, "view": { "filter": {}, "sort": {}, "page": 0 },
+                    "template": [ /* 模板子形状，坐标相对容器左上角 */ ] },   // ✅ 中继器（A2）
+      "masterId": "m1", "children": [ /* 母版快照子形状，世界坐标 */ ]       // ✅ 组件实例（A3）
     }]
-  }]
+  }],
+  "assets": [ { "id": "a1", "name": "图片.png", "mime": "image/png", "w": 640, "h": 480,
+                "hash": "…", "dataUrl": "data:image/png;base64,…" } ],      // ✅ 图片资产表（hash 去重）
+  "library": [ { "id": "m1", "name": "组件 1", "w": 120, "h": 60,
+                 "shapes": [ /* 母版局部坐标形状（左上角=0,0） */ ] } ]     // ✅ 组件母版
 }
 ```
 
-**尚未进入模型的字段**：`assets[]`（图片资产）、`library[]` + `instance`、`repeater`、`size.mode: autoHeight/auto`。`version` 存在但**没有迁移函数**——目前只做 `format` 校验。
+**尚未进入模型的字段**：`size.mode: autoHeight/auto`。`version` 存在但**没有迁移函数**——目前只做 `format` 校验。
 
 ---
 
@@ -149,7 +153,9 @@ src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
 | 样式继承 | `StyleSheets` + `F="Inh"` | ✅ 线/填充/文本三组继承 |
 | 注释/链接/脚本 | `User` 段 `VXNotes/VXLinks/VXScripts` | ✅ 往返保真；Visio 原生 `Annotation`/`Hyperlink` 段 ⬜ |
 | 交互/面板状态/变量 | `User` 段 `VXInteractions/VXPanel/VXVars/VXGlobalVars` | ✅ |
-| 图片 | `Foreign` + `ForeignData` + `visio/media/*` | ⬜ 读写均未实现 |
+| 图片 | `Foreign` + `ForeignData` + `visio/media/*` | ✅ 写入图片本体与资产表，读回 `assets[].dataUrl` |
+| 中继器 | `User` 段 `VXType="repeater"` + `VXRepeater` | ✅ 数据集/模板/布局/分页整段 JSON 往返（Visio 内只显示外框） |
+| 组件实例 | （无对应映射：写回时摊平为组合） | ◐ 读回为等价 `group`，母版不入 vsdx |
 | 页面参考线 | （无对应映射） | ⬜ `guides` 保存后丢失 |
 | 主题 | `document.xml` 主题色 | ◐ 仅解析索引色，未解析 `THEME(...)` 名 |
 
@@ -157,7 +163,7 @@ src/exporter.cpp              # export.write：写文件夹 / miniz 打 zip
 
 ---
 
-## 5. Bridge 命令（`src/main.cpp` 实际 10 条）
+## 5. Bridge 命令（`src/main.cpp` 实际 12 条）
 
 ```cpp
 bridge.test          // 连通性自检（返回 pong + 版本）
@@ -165,14 +171,16 @@ app.set_title        // 标题 + 未保存标记
 app.get_info         // 版本 / 平台
 app.open_url         // 系统浏览器打开（品牌链接）
 file.open_dialog     // 原生打开
+file.open_image      // 图片选择（返回 dataUrl，供 S3 插入图片）
 file.save_dialog     // 原生保存
 vsdx.save            // {path, doc} JSON→VSDX（含最近文件）
 vsdx.load            // {path} → {doc, warnings}
+export.write         // {path, files[]} 写文件夹 / miniz 打 zip
 app.recent_files     // get / push / clear
 log_error            // 前端诊断
 ```
 
-**缺失**：`export.write`（导出落盘/打 zip）、`app.close_confirm`（关窗拦截）。后端无定时 Emit（沿用现状）。
+**缺失**：`app.close_confirm`（关窗拦截）。后端无定时 Emit（沿用现状）。
 
 ---
 
@@ -185,7 +193,7 @@ log_error            // 前端诊断
 | # | 功能 | 状态 | 实现位置 | 备注 |
 |---|---|---|---|---|
 | 1 | 单 exe、窗口、Bridge 双向 | ✅ | `TauriCPP/` + `main.cpp` | |
-| 2 | CMake / 资源嵌入 / 版本 / 图标 | ✅ | `CMakeLists.txt`、`version.hpp`、`build.ps1` | 1.0.0 |
+| 2 | CMake / 资源嵌入 / 版本 / 图标 | ✅ | `CMakeLists.txt`、`version.hpp`、`build.ps1` | 1.1.0 |
 | 3 | 菜单栏 / 工具栏 / 四栏布局 / 状态栏 | ✅ | `index.html`、`app.css` | |
 | 4 | 最近文件、脏标记标题 | ✅ | `fileio.js`、`main.cpp` | |
 | 5 | 关窗未保存确认 | ⬜ | — | 无 `app.close_confirm` |
@@ -232,18 +240,18 @@ log_error            // 前端诊断
 | 31 | 端点拖拽换连接点（14px 吸附） | ✅ | `tools.js` | |
 | 32 | 手动拖拽线段（生成 `route:"manual"`） | ✅ | `tools.js`、`routing.js` | |
 | 33 | 正交布线 A* 避障 | ⬜ | `routing.js` | 现为固定引导段 + 曼哈顿折线 |
-| 34 | 图片插入（png/jpg/svg/webp）+ 资产表 | ⬜ | — | 形状库只有「图片占位」块 |
-| 35 | 组件库（母版 / 实例 / 解除链接 / 环检测） | ⬜ | — | 左栏 Tab 已隐藏 |
+| 34 | 图片插入（png/jpg/svg/webp）+ 资产表 | ✅ | `images.js`、`writer/reader` | hash 去重、contain/cover/fill、`Foreign`+`media` 往返 |
+| 35 | 组件库（母版 / 实例 / 解除链接 / 环检测） | ✅ | `library.js`、`props.js` | 左栏「组件库」Tab；写回 vsdx 时实例摊平为组合 |
 
 ### 6.5 Axure 向特性
 
 | # | 功能 | 状态 | 实现位置 | 备注 |
 |---|---|---|---|---|
-| 36 | 交互面板：6 事件 × 9 动作 | ✅ | `inspect.js` | click/dblclick/enter/leave/pageload/keydown |
+| 36 | 交互面板：6 事件 × 14 动作 | ✅ | `inspect.js` | click/dblclick/enter/leave/pageload/keydown；含 5 个中继器动作 |
 | 37 | 动态面板多状态编辑/切换 | ✅ | `model.js`、`inspect.js`、`interact.js` | 双击进入状态编辑 |
 | 38 | 三级变量 + `{{var}}` 插值 | ✅ | `interact.js`、`inspect.js` | local → page → global |
 | 39 | F5 全屏预览（含动效、键盘事件） | ✅ | `preview.js` | |
-| 40 | 中继器（数据集/模板/布局/增删行/过滤排序分页） | ⬜ | — | 形状库仅有占位构件 |
+| 40 | 中继器（数据集/模板/布局/增删行/过滤排序分页） | ✅ | `repeater.js`、`interact.js`、`props.js` | 形状库条目 + CSV 编辑 + 5 个中继器动作 |
 | 41 | 注释浮层（预览/导出时高亮角标） | ⬜ | — | 仅编辑面板 |
 
 ### 6.6 元数据
@@ -272,7 +280,7 @@ log_error            // 前端诊断
 | 51 | 写入合法 OPC 包（Visio 可打开） | ✅ | 形状/文本/颜色/连线正确 |
 | 52 | 读取真实 Visio 文件（样式继承/母版合并/相对几何/1-D/圆弧） | ✅ | 三样本回归通过 |
 | 53 | 图层 / 组合链 / 粘附 / 交互 / 面板 / 变量 往返 | ✅ | `User` 段 |
-| 54 | 图片 `ForeignData` 读写 | ⬜ | |
+| 54 | 图片 `ForeignData` 读写 | ✅ | writer 写 `Foreign`+`visio/media/*` 并同步资产表，reader 还原 `assets[].dataUrl` |
 | 55 | 保存时保留母版引用（而非全展开） | ⬜ | 当前一律展开为具体形状 |
 | 56 | 页面参考线往返 | ⬜ | |
 | 57 | 主题色 `THEME(...)` 解析 | ◐ | 仅索引色 |
@@ -287,10 +295,10 @@ log_error            // 前端诊断
 | 61 | 大文档性能（500+ 形状） | ⬜ | 无缓存/索引 |
 | 62 | 亮 / 暗主题 | ⬜ | 只有单套亮色 |
 | 63 | README / 使用说明 | ✅ | 进度表已与本文件同步（P5 / P5.5 均标 ✅） |
-| 64 | 前端 Playwright 验收脚本（属性面板 + 主干交互 + 子路径闭合 + 路径缩放） | ✅ | `test/e2e/`，复用本机 Edge，88 项断言 |
+| 64 | 前端 Playwright 验收脚本（属性面板 + 主干交互 + 子路径闭合 + 路径缩放 + 导出 + 图片/中继器/组件库） | ✅ | `test/e2e/`，复用本机 Edge，180 项断言 |
 | 65 | 纯路径形状随包围盒缩放（`path.design`） | ✅ | 拖手柄 / 面板改宽高 / 组缩放 / 布尔输入统一按 w÷design 缩放，导出同步 |
 
-**统计**：✅ 38 项 · ◐ 6 项 · ⬜ 21 项（共 65 项）。
+**统计**：✅ 47 项 · ◐ 6 项 · ⬜ 12 项（共 65 项）。
 
 ---
 
@@ -302,15 +310,15 @@ log_error            // 前端诊断
 |---|---|---|---|---|
 | ~~**S1**~~ ✅ | **导出 MVP：PNG / SVG / HTML / PDF**（2026-10-29 已交付） | 产品定位写着「可导出 HTML/PNG/PDF/SVG」，交付闭环已接上；四种产物均复用 `drawScene`/`interact.js` 保证与编辑一致 | 已交：一级菜单「导出」（在「文件」右侧）出 PNG（1x/2x/3x、透明底、当前页）/ SVG（当前页矢量）/ HTML（整个工程自包含可交互）/ PDF（整个工程多页）；`export.write` 落盘，无 Bridge 时退化下载；验收 `test/e2e/check_export.js`（65 项） | 已交：`export/{png,svg,pdf,html}.js` + `exporter.js` + `src/exporter.{cpp,hpp}` + `export.write` + `file.save_dialog` 参数化 + 菜单 |
 | ~~**S2**~~ ✅ | **形状属性面板（几何 + 文本样式）**（2026-10-29 已完成） | 没有它，圆角/透明度/字体/字号/对齐/精确坐标全部不可编辑——等于让用户用模板默认值拼图；模型与渲染器都已支持，纯 UI 缺失 | 选中形状可改 x/y/w/h/角度/圆角/透明度；文本可改字体/字号/加粗/颜色/水平·垂直对齐；多选混合值显示「多个值」；全部走 History | 已交：`frontend/js/props.js` + `index.html` 挂「属性」Tab + `app.js` 初始化；验收 `test/e2e/check_props.js` |
-| **S3** | **图片插入（png/jpg/svg/webp）** | 线框原型刚需；现在形状库里只有灰色占位块，用户必须去别的工具拼图 | 可从菜单/拖拽插入图片；按 hash 去重存资产表；支持 contain/cover/fill/stretch；保存 vsdx 写 `Foreign`+`media`，重新打开不丢 | `model.js` 加 `assets`、新增 `images.js`、`renderer.js` 画图、`reader/writer` 增 `Foreign` 段 |
+| ~~**S3**~~ ✅ | **图片插入（png/jpg/svg/webp）**（2026-11-01 已交付） | 线框原型刚需；现在形状库里只有灰色占位块，用户必须去别的工具拼图 | 已交：菜单/拖拽插入；按 hash 去重存资产表；contain/cover/fill；保存 vsdx 写 `Foreign`+`media`，重开不丢 | 已交：`frontend/js/images.js` + `model.js` 加 `assets` + `renderer.js` 画图 + `reader/writer` 增 `Foreign` 段 + `file.open_image` |
 
 ### A 级：显著提升产品完整度
 
 | 优先级 | 功能 | 说明 | 验收标准 |
 |---|---|---|---|
 | **A1** | 导出多页 zip 打包 + 导出对话框细化 | S1 已把 PNG/SVG/HTML/PDF 四种产物打通；A1 只剩多页打包与路径细化 | 多页工程可一次导出为 zip（逐页 PNG / 多页文档）；导出前可选页面范围 |
-| **A2** | 中继器 Repeater | 数据集 + 模板 + 竖向/网格布局，导出/预览渲染；补齐 Axure 侧最后一块 | 模板内 `{{列名}}` 插值；`addRow/deleteRow/filter/sort/分页` 动作可跑；保存 vsdx 往返 |
-| **A3** | 组件库（母版 / 实例 / 解除链接） | 左栏 Tab 已埋好；跨页复用是 Axure 核心价值 | 拖入组件生成实例；改实例文本/样式不影响母版；解除链接变独立形状；嵌套环检测报错 |
+| ~~**A2**~~ ✅ | 中继器 Repeater（2026-11-01 已交付） | 数据集 + 模板 + 竖向/网格布局，导出/预览渲染；补齐 Axure 侧最后一块 | 已交：模板内 `{{列名}}` 插值；`repAddRow/repDelRow/repFilter/repSort/repPage` 动作可跑；SVG/HTML 导出与 vsdx 往返 |
+| ~~**A3**~~ ✅ | 组件库（母版 / 实例 / 解除链接）（2026-11-01 已交付） | 左栏 Tab 已埋好；跨页复用是 Axure 核心价值 | 已交：拖入组件生成实例；改实例不影响母版；解除链接变独立形状；嵌套环检测拒绝插入 |
 | **A4** | 页面树分组 + 拖拽排序；`autoHeight/auto` 页面模式 | 页面多了以后平铺列表不可用；autoHeight 是原型交付常用模式 | 可建文件夹、拖拽调整层级与顺序；autoHeight 画布随内容向下扩展并写入 vsdx |
 | **A5** | 参考线 / 页面尺寸模式随 vsdx 保存 | 现在保存再打开参考线全丢（用户已感知的「丢数据」） | `guides` 写入 `User` 段（`VXGuides`），读取还原；尺寸模式同理 |
 
@@ -350,7 +358,7 @@ log_error            // 前端诊断
 | **P5 元数据** | 注释/链接/脚本面板 + `User` 段往返 | 保存重开不丢 | ✅（Visio 原生段 ⬜） |
 | **P5.5 属性面板** | 几何 + 文本样式 + 圆角/透明度（**S2**） | 所有样式可编辑、可撤销 | ✅（`test/e2e/check_props.js`） |
 | **P6 导出** | HTML / PNG（**S1**）→ SVG / PDF / zip（**A1**） | 导出 HTML 可交互、PNG/PDF 一致 | ✅ S1（PNG/SVG/HTML/PDF，`test/e2e/check_export.js`）· zip 打包待 A1 |
-| **P6.5 图片 + 中继器 + 组件库** | **S3 / A2 / A3** | 原型可插入图片、可重复列表、可复用组件 | ⬜ |
+| **P6.5 图片 + 中继器 + 组件库** | **S3 / A2 / A3** | 原型可插入图片、可重复列表、可复用组件 | ✅（`test/e2e/check_p6_5.js`；vsdx 往返见 `test/vsdx_test.cpp` s12/s13） |
 | **P7 打磨** | 布线避障 / 剪贴板 / 关窗确认 / 性能 / 主题 / 测试 | 500+ 形状不卡、ctest 全绿 | ⬜ |
 
 ---
@@ -364,7 +372,7 @@ log_error            // 前端诊断
 | 连接线自动布线复杂 | 现有固定引导段 + 曼哈顿折线已可用；A* 作为 B1 增量，失败退化为直角折线 |
 | Canvas 文本排版（换行/对齐/字体回退） | 渲染前字体回退链 `family → Arial → Helvetica → YaHei`；与 Visio SVG 对比时区分「字体缺失」与「排版错误」 |
 | Visio 箭头/圆弧等细节语义误读 | 已用 `test/sample/*.svg` 反推字形与圆弧行语义；新增样本必须先做 SVG 对照再改代码 |
-| 前端代码量增长难维护 | 单文件职责清晰（21 个模块）；新增导出/图片/组件按 §2「目标结构」拆文件 |
+| 前端代码量增长难维护 | 单文件职责清晰（29 个前端文件）；新增能力按 §2 模块清单拆文件（图片/中继器/组件库/导出各自独立） |
 | 脚本功能安全边界 | 仅在预览/导出沙箱执行（编辑器内不执行），文档明示 |
 | 属性面板与渲染器字段漂移 | 面板字段直接读写 `shape.style`，不引入第二套状态；多选用「多个值」占位；`test/e2e/check_props.js` 逐字段断言写入结果 |
 | 面板/输入框抢占全局快捷键 | 面板输入框只屏蔽非 Ctrl/⌘ 键（Delete/方向键不穿透画布）；`editor.js` 对 `input[type=number]` 只放行 Ctrl+Z/Y |
@@ -385,5 +393,5 @@ log_error            // 前端诊断
 
 ```powershell
 python -m http.server 8731      # 仓根起静态服务
-node test/e2e/run_all.js        # 属性面板 + 主干交互 + 子路径闭合 + 路径缩放，88 项断言，退出码非 0 即失败
+node test/e2e/run_all.js        # 属性面板 + 主干交互 + 子路径闭合 + 路径缩放 + 导出 + P6.5，180 项断言，退出码非 0 即失败
 ```

@@ -7,6 +7,8 @@
 
 #include "version.hpp"
 
+#include "../exporter.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -305,7 +307,8 @@ void CollectShapes(const nlohmann::json& shapes, const std::string& chain, std::
     for (const auto& s : shapes) {
         if (!s.is_object()) continue;
         std::string type = JStr(s, "type");
-        if (type == "group") {
+        // 组件实例（A3）在 VSDX 里按组合摊平：母版不入文件，实例内容仍是完整可见的形状
+        if (type == "group" || type == "instance") {
             std::string id = JStr(s, "id");
             std::string ch = chain.empty() ? id : (chain + "|" + id);
             auto it = s.find("children");
@@ -319,7 +322,9 @@ void CollectShapes(const nlohmann::json& shapes, const std::string& chain, std::
 // 单个形状 → Visio Shape XML
 std::string BuildShapeXml(const Item& item, double pageHIn,
                           const std::map<std::string, const nlohmann::json*>& byId,
-                          const std::map<std::string, int>& layerIndex, int numericId) {
+                          const std::map<std::string, int>& layerIndex, int numericId,
+                          const std::map<std::string, const nlohmann::json*>& assets,
+                          const std::map<std::string, std::string>& imageRels) {
     const nlohmann::json& s = *item.sh;
     std::string type = JStr(s, "type", "rect");
     std::string internalId = JStr(s, "id", "s" + std::to_string(numericId));
@@ -335,6 +340,17 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     double lineWidth = JNum(st, "lineWidth", 1.0);
     bool hasFill = !fill.empty() && fill != "transparent" && opacity > 0.001;
     bool hasLine = !line.empty() && line != "transparent" && lineWidth > 0.001;
+
+    // 图片（S3）：Visio 里是 Foreign 形状，图片本体通过页面 rels 指向 media part
+    bool isImage = (type == "image");
+    std::string imageRid;
+    const nlohmann::json* imageAsset = nullptr;
+    if (isImage) {
+        auto rIt = imageRels.find(JStr(s, "assetId"));
+        if (rIt != imageRels.end()) imageRid = rIt->second;
+        auto aIt = assets.find(JStr(s, "assetId"));
+        if (aIt != assets.end()) imageAsset = aIt->second;
+    }
 
     std::string x, y, w, h;  // 英寸
     std::string geometry;
@@ -487,7 +503,8 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
 
     std::string out = "<Shape ID=\"" + std::to_string(numericId) + "\" NameU=\"" + XmlEscape(internalId) +
                       "\" Name=\"" + XmlEscape(internalId) +
-                      "\" Type=\"Shape\" LineStyle=\"0\" FillStyle=\"0\" TextStyle=\"0\">";
+                      "\" Type=\"" + (isImage ? "Foreign" : "Shape") +
+                      "\" LineStyle=\"0\" FillStyle=\"0\" TextStyle=\"0\">";
     out += Cell("PinX", x) + Cell("PinY", y);
     out += Cell("Width", w) + Cell("Height", h);
     out += CellF("LocPinX", Num(std::atof(w.c_str()) / 2), "Width*0.5");
@@ -495,6 +512,12 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     out += Cell("Angle", Num(-JNum(s, "angle", 0)));
     out += Cell("FlipX", "0") + Cell("FlipY", "0");
     out += Cell("ResizeMode", "0");
+    if (isImage) {
+        // Foreign 形状的图片位置单元格：整图铺在形状包围盒内
+        out += Cell("ImgOffsetX", "0") + Cell("ImgOffsetY", "0");
+        out += Cell("ImgWidth", w) + Cell("ImgHeight", h);
+        out += Cell("ClippingPath", "0");
+    }
 
     // 图层归属：Visio 用 LayerMember 记图层序号，与 layers 数组下标一致
     auto layerIt = layerIndex.find(JStr(s, "layer"));
@@ -579,6 +602,23 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
             user += UserRow("VXPanel", panelIt->dump());
         }
     }
+    if (isImage) {
+        user += UserRow("VXType", "image");
+        user += UserRow("VXFit", JStr(s, "fit", "contain"));
+        // 原图像素尺寸：重开文件时无需解码即可按正确宽高比摆放
+        if (imageAsset) {
+            user += UserRow("VXImgW", Num(JNum(*imageAsset, "w", 0)));
+            user += UserRow("VXImgH", Num(JNum(*imageAsset, "h", 0)));
+        }
+    }
+    // 中继器（A2）：数据集 / 模板 / 布局整体存成一段 JSON，Visio 里只保留外框
+    if (type == "repeater") {
+        user += UserRow("VXType", "repeater");
+        auto repIt = s.find("repeater");
+        if (repIt != s.end() && repIt->is_object()) {
+            user += UserRow("VXRepeater", repIt->dump());
+        }
+    }
     if (s.contains("interactions") && s["interactions"].is_array() && !s["interactions"].empty()) {
         user += UserRow("VXInteractions", s["interactions"].dump());
     }
@@ -615,6 +655,12 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     }
     if (!user.empty()) out += "<Section N=\"User\">" + user + "</Section>";
 
+    if (isImage && !imageRid.empty()) {
+        // 图片本体：指向本页 rels 里的 image 关系（进一步指向 visio/media/*）
+        out += "<ForeignData ForeignType=\"Bitmap\" CompressionType=\"PNG\">" +
+               std::string("<Rel r:id=\"") + imageRid + "\"/></ForeignData>";
+    }
+
     if (!text.empty() && type != "connector") {
         out += "<Text>" + XmlEscape(text) + "</Text>";
     }
@@ -623,7 +669,29 @@ std::string BuildShapeXml(const Item& item, double pageHIn,
     return out;
 }
 
-std::string WritePageXml(const nlohmann::json& page, std::string& err) {
+// 图片扩展名 / MIME：优先用文档资产表里的字段，缺失时按 mime 反推
+std::string ImageExt(const nlohmann::json& a) {
+    std::string ext = JStr(a, "ext");
+    if (!ext.empty()) return ext == "jpeg" ? "jpg" : ext;
+    std::string mime = JStr(a, "mime");
+    if (mime == "image/jpeg") return "jpg";
+    if (mime == "image/gif") return "gif";
+    if (mime == "image/webp") return "webp";
+    if (mime == "image/svg+xml") return "svg";
+    return "png";
+}
+
+std::string ImageContentType(const std::string& ext) {
+    if (ext == "jpg") return "image/jpeg";
+    if (ext == "gif") return "image/gif";
+    if (ext == "webp") return "image/webp";
+    if (ext == "svg") return "image/svg+xml";
+    return "image/png";
+}
+
+std::string WritePageXml(const nlohmann::json& page,
+                         const std::map<std::string, const nlohmann::json*>& assets,
+                         std::map<std::string, std::string>& imageRels, std::string& err) {
     double pageW = JNum(page.value("size", nlohmann::json::object()), "w", 800);
     double pageH = JNum(page.value("size", nlohmann::json::object()), "h", 1100);
     double pageWIn = pageW / kPxPerInch;
@@ -635,6 +703,19 @@ std::string WritePageXml(const nlohmann::json& page, std::string& err) {
 
     std::map<std::string, const nlohmann::json*> byId;
     for (const Item& it : items) byId[JStr(*it.sh, "id")] = it.sh;
+
+    // 本页用到的图片资产 → 页面 rels 的 rId（同一资产在一页内只建一条关系）
+    imageRels.clear();
+    for (const Item& it : items) {
+        if (JStr(*it.sh, "type") != "image") continue;
+        std::string aid = JStr(*it.sh, "assetId");
+        auto aIt = assets.find(aid);
+        if (aid.empty() || aIt == assets.end()) continue;
+        if (JStr(*aIt->second, "dataUrl").empty()) continue;   // 没有图片数据：不建关系，读回时留占位
+        if (imageRels.find(aid) == imageRels.end()) {
+            imageRels[aid] = "rId" + std::to_string(imageRels.size() + 1);
+        }
+    }
 
     // 图层序号：layers 数组下标即 Visio 的图层号
     std::map<std::string, int> layerIndex;
@@ -658,7 +739,7 @@ std::string WritePageXml(const nlohmann::json& page, std::string& err) {
     xml += "<Shapes>";
     int numeric = 1;
     for (const Item& it : items) {
-        xml += BuildShapeXml(it, pageHIn, byId, layerIndex, numeric++);
+        xml += BuildShapeXml(it, pageHIn, byId, layerIndex, numeric++, assets, imageRels);
     }
     xml += "</Shapes>";
 
@@ -806,6 +887,18 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">";
 
+    // 图片资产（S3）：doc.assets[] → visio/media/*，同一资产跨页共用同一个 media part
+    std::map<std::string, const nlohmann::json*> assets;
+    auto assetsIt = doc.find("assets");
+    if (assetsIt != doc.end() && assetsIt->is_array()) {
+        for (const auto& a : *assetsIt) {
+            if (a.is_object()) assets[JStr(a, "id")] = &a;
+        }
+    }
+    std::map<std::string, std::string> mediaParts;   // assetId → 文件名（不含目录）
+    std::map<std::string, bool> defaultExts;         // 已写入 [Content_Types].xml 的图片扩展名
+    int mediaSeq = 0;
+
     int index = 0;
     for (const auto& page : *pagesIt) {
         if (!page.is_object()) continue;
@@ -817,9 +910,39 @@ std::string BuildVsdxBytes(const nlohmann::json& doc, std::string& err) {
 
         std::string partName = "visio/pages/page" + std::to_string(index) + ".xml";
         std::string errLocal;
-        std::string pageXml = WritePageXml(page, errLocal);
+        std::map<std::string, std::string> imageRels;
+        std::string pageXml = WritePageXml(page, assets, imageRels, errLocal);
         pkg.Add(partName, pageXml);
         contentTypes += "<Override PartName=\"/" + partName + "\" ContentType=\"application/vnd.ms-visio.page+xml\"/>";
+
+        // 本页图片关系 + 媒体 part（rels 位于 visio/pages/_rels/，目标用 ../media/）
+        if (!imageRels.empty()) {
+            std::string relsXml =
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">";
+            for (const auto& kv : imageRels) {
+                auto aIt = assets.find(kv.first);
+                if (aIt == assets.end()) continue;
+                const nlohmann::json& a = *aIt->second;
+                std::string& fileName = mediaParts[kv.first];
+                if (fileName.empty()) {
+                    std::string ext = ImageExt(a);
+                    fileName = "image" + std::to_string(++mediaSeq) + "." + ext;
+                    std::string bytes = vxex::DecodeBase64(JStr(a, "dataUrl"));
+                    if (!bytes.empty()) pkg.Add("visio/media/" + fileName, bytes);
+                    if (!defaultExts[ext]) {
+                        defaultExts[ext] = true;
+                        contentTypes += "<Default Extension=\"" + ext + "\" ContentType=\"" +
+                                        ImageContentType(ext) + "\"/>";
+                    }
+                }
+                relsXml += "<Relationship Id=\"" + kv.second + "\" "
+                           "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" "
+                           "Target=\"../media/" + fileName + "\"/>";
+            }
+            relsXml += "</Relationships>";
+            pkg.Add("visio/pages/_rels/page" + std::to_string(index) + ".xml.rels", relsXml);
+        }
 
         pagesXml += "<Page ID=\"" + std::to_string(index - 1) + "\" Name=\"" + XmlEscape(name) +
                     "\" NameU=\"" + XmlEscape(name) + "-" + std::to_string(index) +

@@ -428,11 +428,13 @@
             panel: { states: [{ id: "st1", name: "状态 1", shapes: [] }] },
           },
         },
+        // 中继器：单一形状承载「数据集 + 模板 + 布局」，拖入即可编辑数据（A2）
         {
           id: "proto-repeater", name: "中继器",
-          def: {
-            type: "rect", w: 220, h: 140, text: "中继器",
-            style: { cornerRadius: 10, fill: PR.white, line: PR.line, lineWidth: 1, font: font({ color: PR.textDim }) },
+          def: VX.Repeater ? VX.Repeater.defaultShape() : {
+            type: "repeater", w: 260, h: 192,
+            repeater: { columns: ["标题", "说明"], dataset: [], layout: { mode: "vertical", rowHeight: 64 },
+              template: [] },
           },
         },
         {
@@ -490,6 +492,13 @@
     // 表格：单元格按世界坐标由包围盒推导，不走「左上角=0,0 + 整体平移」的组合插入路径
     if (props.table && VX.Table) {
       VX.Table.build(props);
+      return props;
+    }
+    // 中继器：模板坐标本来就相对容器左上角（0,0），只补 id，不做整体平移
+    if (props.type === "repeater") {
+      const rep = props.repeater || (props.repeater = {});
+      rep.template = rep.template || [];
+      assignIds(rep.template);
       return props;
     }
     if (props.children) {
@@ -701,8 +710,24 @@
       for (const ch of tmp.children || []) drawThumbNode(c, ch, k);
       return;
     }
-    if (s.type === "group") {
+    if (s.type === "group" || s.type === "instance") {
       for (const ch of s.children || []) drawThumbNode(c, ch, k);
+      return;
+    }
+    // 中继器：虚线容器 + 第一条数据（模板首行），一眼看出「可重复」
+    if (s.type === "repeater" && VX.Repeater) {
+      c.save();
+      c.strokeStyle = SK.inkSoft;
+      c.lineWidth = SK.lineWidth / k;
+      c.setLineDash([4 / k, 3 / k]);
+      c.strokeRect(0, 0, Math.max(s.w || 1, 1), Math.max(s.h || 1, 1));
+      c.setLineDash([]);
+      c.restore();
+      const rep = s.repeater || {};
+      const first = VX.Repeater.items(s)[0];
+      const inst = VX.Repeater.instantiate(rep.template || [], first ? first.row : {},
+        first ? first.dx : 0, first ? first.dy : 0);
+      for (const t of inst) drawThumbNode(c, t, k);
       return;
     }
     if (s.type === "connector") {

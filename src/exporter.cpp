@@ -53,6 +53,32 @@ std::string DecodeBase64(const std::string& text) {
     return out;
 }
 
+std::string EncodeBase64(const std::string& bytes) {
+    static const char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4 + 4);
+    size_t i = 0;
+    for (; i + 2 < bytes.size(); i += 3) {
+        unsigned v = (static_cast<unsigned char>(bytes[i]) << 16) |
+                     (static_cast<unsigned char>(bytes[i + 1]) << 8) |
+                     static_cast<unsigned char>(bytes[i + 2]);
+        out.push_back(kTable[(v >> 18) & 63]);
+        out.push_back(kTable[(v >> 12) & 63]);
+        out.push_back(kTable[(v >> 6) & 63]);
+        out.push_back(kTable[v & 63]);
+    }
+    if (i < bytes.size()) {
+        unsigned v = static_cast<unsigned char>(bytes[i]) << 16;
+        bool two = i + 1 < bytes.size();
+        if (two) v |= static_cast<unsigned char>(bytes[i + 1]) << 8;
+        out.push_back(kTable[(v >> 18) & 63]);
+        out.push_back(kTable[(v >> 12) & 63]);
+        out.push_back(two ? kTable[(v >> 6) & 63] : '=');
+        out.push_back('=');
+    }
+    return out;
+}
+
 bool EnsureParentDir(const std::string& path) {
     std::wstring w = ToWide(path);
     size_t slash = w.find_last_of(L"\\/");

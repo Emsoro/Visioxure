@@ -185,6 +185,30 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         return json{{"success", true}, {"path", files.front()}};
     });
 
+    // 插入图片（S3）：选文件 → 原样读字节 → base64 交给前端拼 dataURL 存进资产表
+    bridge.RegisterCommand("file.open_image", [&app](const json&) -> json {
+        tauricpp::Dialog::OpenOptions opts;
+        opts.title = "插入图片";
+        opts.filters = {{"图片", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg"}, {"所有文件", "*.*"}};
+        auto files = tauricpp::Dialog::OpenFile(app.GetWindow().GetHwnd(), opts);
+        if (files.empty()) return json{{"success", false}, {"canceled", true}, {"path", ""}};
+        std::string path = files.front();
+        std::string bytes, err;
+        if (!ReadFileBytes(path, bytes, err)) return json{{"success", false}, {"error", err}};
+        std::size_t dot = path.find_last_of('.');
+        std::string ext = dot == std::string::npos ? "" : path.substr(dot + 1);
+        for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        std::string mime = "image/png";
+        if (ext == "jpg" || ext == "jpeg") mime = "image/jpeg";
+        else if (ext == "gif") mime = "image/gif";
+        else if (ext == "webp") mime = "image/webp";
+        else if (ext == "svg") mime = "image/svg+xml";
+        std::size_t slash = path.find_last_of("\\/");
+        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        return json{{"success", true}, {"path", path}, {"name", name}, {"mime", mime},
+                    {"base64", vxex::EncodeBase64(bytes)}};
+    });
+
     bridge.RegisterCommand("file.save_dialog", [&app](const json& args) -> json {
         tauricpp::Dialog::SaveOptions opts;
         std::string ext = args.value("extension", std::string(".vsdx"));

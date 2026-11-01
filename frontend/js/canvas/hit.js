@@ -51,7 +51,7 @@
     if (s.type === "connector") {
       return VX.Routing.distTo(s, wx, wy) <= 6 / VX.state.zoom;
     }
-    if (s.type === "group") {
+    if (s.type === "group" || s.type === "instance") {
       if (!inAABB(s, wx, wy)) return false;
       return (s.children || []).some((ch) => !ch.lock && inShape(ch, wx, wy));
     }
@@ -130,7 +130,7 @@
           if (hit) return hit;
           continue;
         }
-        if (s.type === "group") {
+        if (s.type === "group" || s.type === "instance") {
           if (!inAABB(s, wx - dx, wy - dy)) continue;
           const hit = this.inPage(s.children, wx - dx, wy - dy, opts);
           if (hit) return hit;

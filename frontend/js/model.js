@@ -41,6 +41,8 @@ window.VX = window.VX || {};
     format: "visioxure",
     version: 1,
     doc: { theme: "light", variables: [] },
+    assets: [],    // 图片资产：{ id, name, mime, ext, w, h, hash, dataUrl }
+    library: [],   // 组件库母版：{ id, name, w, h, shapes: [] }
     pages: [],
   };
 
@@ -91,6 +93,19 @@ window.VX = window.VX || {};
     }
     if (type === "panel") {
       // 动态面板是透明容器，边框只在编辑器里以虚线示意
+      return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
+    }
+    if (type === "repeater") {
+      // 中继器是透明容器：内容由数据集 + 模板重复渲染，边框只在编辑器里示意
+      return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "left", vAlign: "top" } };
+    }
+    if (type === "instance") {
+      return null;   // 组件实例的样式由快照子形状各自持有
+    }
+    if (type === "image") {
+      // 图片默认无填充/无边框，内容由 assetId 决定；边框仍可在样式面板打开
       return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
                font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
     }
@@ -226,7 +241,7 @@ window.VX = window.VX || {};
       const find = (arr) => {
         for (const s of arr || []) {
           if (s.id === id) return s;
-          if (s.type === "group") { const f = find(s.children); if (f) return f; }
+          if (s.type === "group" || s.type === "instance") { const f = find(s.children); if (f) return f; }
           if (s.type === "panel") {
             for (const st of (s.panel && s.panel.states) || []) {
               const f = find(st.shapes);
@@ -341,7 +356,9 @@ window.VX = window.VX || {};
       const copy = JSON.parse(JSON.stringify(src));
       const reid = (x) => {
         x.id = "s" + nextShapeId++;
-        if (x.type === "group" && x.children) x.children.forEach(reid);
+        if ((x.type === "group" || x.type === "instance") && x.children) x.children.forEach(reid);
+        if (x.type === "panel") for (const st of (x.panel && x.panel.states) || []) (st.shapes || []).forEach(reid);
+        if (x.type === "repeater") for (const t of (x.repeater && x.repeater.template) || []) reid(t);
         return x;
       };
       reid(copy);
@@ -371,13 +388,13 @@ window.VX = window.VX || {};
       const filt = (arr) => {
         const out = [];
         for (const s of arr) {
-          if (s.type === "group" && s.children) s.children = filt(s.children);
+          if ((s.type === "group" || s.type === "instance") && s.children) s.children = filt(s.children);
           if (!set.has(s.id)) out.push(s);
         }
         return out;
       };
       pg.shapes = filt(pg.shapes);
-      for (const s of pg.shapes) if (s.type === "group") this.syncGroupBounds(s);
+      for (const s of pg.shapes) if (s.type === "group" || s.type === "instance") this.syncGroupBounds(s);
       state.selection = state.selection.filter((id) => !set.has(id));
       state.dirty = true;
     },
@@ -387,7 +404,7 @@ window.VX = window.VX || {};
     moveShapeBy(s, dx, dy) {
       if (!s) return;
       s.x += dx; s.y += dy;
-      if (s.type === "group") {
+      if (s.type === "group" || s.type === "instance") {
         for (const ch of s.children || []) this.moveShapeBy(ch, dx, dy);
       }
     },
@@ -538,7 +555,10 @@ window.VX = window.VX || {};
       if (d.format !== "visioxure") throw new Error("bad format");
       doc.pages = d.pages;
       doc.doc = d.doc || doc.doc;
-      // 重置 id 计数避免冲突（含组合/面板子形状）
+      // 图片资产与组件库（P6.5）：缺失时补空数组，旧文件不受影响
+      doc.assets = Array.isArray(d.assets) ? d.assets : [];
+      doc.library = Array.isArray(d.library) ? d.library : [];
+      // 重置 id 计数避免冲突（含组合/面板/实例/中继器模板子形状）
       nextShapeId = 1; nextPageId = 1;
       const scan = (arr) => {
         for (const s of arr || []) {
@@ -547,6 +567,9 @@ window.VX = window.VX || {};
           nextShapeId = Math.max(nextShapeId, sid + 1);
           if (s.type === "group") scan(s.children);
           if (s.type === "panel") for (const st of (s.panel && s.panel.states) || []) scan(st.shapes);
+          if (s.type === "instance") scan(s.children);
+          // 中继器模板是一组形状（重复渲染时按行插值），模板 id 也要计入
+          if (s.type === "repeater" && s.repeater) scan(s.repeater.template);
         }
       };
       doc.pages.forEach((p) => {

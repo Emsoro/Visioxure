@@ -541,8 +541,8 @@
           VX.Renderer.invalidate();
           return;
         }
-        if (shape.type === "group") {
-          // 双击组 → 进入组内编辑（组内模式下双击子组则逐层深入）
+        if (shape.type === "group" || shape.type === "instance") {
+          // 双击组 / 组件实例 → 进入内部编辑（实例改的是快照，不影响母版）
           S().enterGroup = shape.id;
           S().selection = [];
           VX.Events.emit("selection");
@@ -560,7 +560,7 @@
     if (s.type === "connector") return null; // 连接线无缩放手柄
     const z = VX.Viewport.zoom;
     for (const h of VX.Overlay.handlesOf(s)) {
-      if (s.type === "group" && h.id === "rot") continue; // 组不旋转
+      if ((s.type === "group" || s.type === "instance") && h.id === "rot") continue; // 组/实例不旋转
       const p = VX.Viewport.w2s(h.x, h.y);
       const r = h.id === "rot" ? 7 : 6;
       if (Math.abs(sc.x - p.x) <= r && Math.abs(sc.y - p.y) <= r) return h;

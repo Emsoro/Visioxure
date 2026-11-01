@@ -9,6 +9,7 @@
   const TYPE_NAMES = {
     rect: "矩形", ellipse: "圆形", path: "路径", text: "文本",
     connector: "连接线", image: "图片", panel: "动态面板",
+    repeater: "中继器", instance: "组件实例",
   };
   // 常用字体：Visio 导出的文件多用前两项，缺字体时渲染器会回退到 Arial/雅黑
   const FONTS = [
@@ -275,14 +276,19 @@
 
     const wrap = document.createDocumentFragment();
     wrap.appendChild(el("div", "prop-section", "位置与大小"));
+    // 组合/组件实例的子形状是世界坐标：改位置要连带平移子形状，否则内容会留在原地
+    const moveTo = (s, v, axis) => {
+      if (s.type === "group" || s.type === "instance") VX.Model.moveShapeBy(s, axis === "x" ? v - s.x : 0, axis === "y" ? v - s.y : 0);
+      else s[axis] = v;
+    };
     wrap.appendChild(numberRow({
       label: "X", unit: "px", digits: 1, action: "修改位置",
-      get: (s) => s.x, set: (s, v) => { s.x = v; },
+      get: (s) => s.x, set: (s, v) => moveTo(s, v, "x"),
       title: "形状左上角 X（世界坐标 px）",
     }));
     wrap.appendChild(numberRow({
       label: "Y", unit: "px", digits: 1, action: "修改位置",
-      get: (s) => s.y, set: (s, v) => { s.y = v; },
+      get: (s) => s.y, set: (s, v) => moveTo(s, v, "y"),
       title: "形状左上角 Y（世界坐标 px）",
     }));
     // 纯路径形状也可改宽高：几何按 path.design 缩放，图形会跟着包围盒一起变
@@ -342,6 +348,102 @@
       [{ v: "top", t: "上" }, { v: "middle", t: "中" }, { v: "bottom", t: "下" }],
       (s) => fontOf(s).vAlign || "top",
       (s, v) => { fontOf(s).vAlign = v; }));
+  }
+
+  // ---------- 图片属性（S3） ----------
+  // fit 决定图片在框内的摆放方式：contain 等比内嵌 / cover 等比裁剪 / fill=拉伸
+  function buildImage(list) {
+    const only = () => targets().filter((s) => s.type === "image");
+    if (!list.some((s) => s.type === "image")) return;
+
+    root.appendChild(el("div", "prop-section", "图片"));
+    root.appendChild(segRow("适应",
+      [{ v: "contain", t: "适应" }, { v: "cover", t: "裁剪" }, { v: "fill", t: "拉伸" }],
+      (s) => s.fit || "contain",
+      (s, v) => { s.fit = v; }, only));
+    root.appendChild(el("div", "panel-hint", "适应：等比缩放并留白 · 裁剪：铺满后裁掉超出 · 拉伸：不保持宽高比"));
+  }
+
+  // ---------- 中继器属性（A2） ----------
+  // 数据用 CSV 编辑：首行列名，其余每行一条记录；模板文字里的 {{列名}} 会逐行替换
+  function buildRepeater(s) {
+    const R = VX.Repeater;
+    if (!R) return;
+    const rep = s.repeater || (s.repeater = { dataset: [], columns: [], layout: {}, template: [] });
+    const one = () => [s];
+
+    root.appendChild(el("div", "prop-section", "中继器"));
+
+    const ta = document.createElement("textarea");
+    ta.className = "sp-textarea";
+    Object.assign(ta.style, { width: "100%", minHeight: "96px", boxSizing: "border-box",
+      fontFamily: "Consolas, monospace", fontSize: "12px" });
+    ta.value = R.toCsv(rep);
+    ta.title = "首行是列名，其后每行一条数据；支持逗号分隔与双引号转义";
+    ta.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey)) e.stopPropagation();
+    });
+    ta.addEventListener("change", () => {
+      commit("修改中继器数据", () => {
+        if (R.setCsv(rep, ta.value)) R.relayout(s);
+      });
+    });
+    root.appendChild(el("div", "sp-label", "数据（CSV）"));
+    root.appendChild(ta);
+
+    root.appendChild(segRow("布局",
+      [{ v: "vertical", t: "竖向" }, { v: "grid", t: "网格" }],
+      (x) => ((x.repeater.layout || {}).mode || "vertical"),
+      (x, v) => { (x.repeater.layout = x.repeater.layout || {}).mode = v; R.relayout(x); }, one));
+    root.appendChild(numberRow({
+      label: "列数", digits: 0, min: 1, max: 20, action: "修改中继器列数", list: one,
+      get: (x) => (x.repeater.layout || {}).cols || 1,
+      set: (x, v) => { (x.repeater.layout = x.repeater.layout || {}).cols = Math.max(1, Math.round(v)); },
+      title: "仅网格布局生效",
+    }));
+    root.appendChild(numberRow({
+      label: "行高", unit: "px", digits: 0, min: 8, max: 2000, action: "修改中继器行高", list: one,
+      get: (x) => (x.repeater.layout || {}).rowHeight || 0,
+      set: (x, v) => { (x.repeater.layout = x.repeater.layout || {}).rowHeight = Math.max(8, v); R.relayout(x); },
+      title: "竖向布局时每条数据占用的高度",
+    }));
+    root.appendChild(numberRow({
+      label: "间距", unit: "px", digits: 0, min: 0, max: 200, action: "修改中继器间距", list: one,
+      get: (x) => (x.repeater.layout || {}).gap || 0,
+      set: (x, v) => { (x.repeater.layout = x.repeater.layout || {}).gap = Math.max(0, v); },
+      title: "网格布局的横/纵间距（可用 gapX/gapY 单独设置）",
+    }));
+    root.appendChild(numberRow({
+      label: "每页", unit: "行", digits: 0, min: 0, max: 500, action: "修改中继器分页", list: one,
+      get: (x) => (x.repeater.pageSize || 0),
+      set: (x, v) => { x.repeater.pageSize = Math.max(0, Math.round(v)); },
+      title: "0 = 不分页；大于 0 时按页显示",
+    }));
+
+    const n = (rep.dataset || []).length;
+    const items = R.items(s);
+    root.appendChild(el("div", "panel-hint",
+      "模板文字可用 {{列名}} 插值；当前 " + n + " 条数据" +
+      (items.pageCount > 1 ? "，分 " + items.pageCount + " 页" : "") +
+      "。交互动作可加行/删行/过滤/排序/翻页。"));
+  }
+
+  // ---------- 组件实例属性（A3） ----------
+  function buildInstance(s) {
+    root.appendChild(el("div", "prop-section", "组件"));
+    const m = VX.Library ? VX.Library.master(s.masterId) : null;
+    root.appendChild(el("div", "panel-hint",
+      m ? "母版：" + m.name + "（" + Math.round(m.w) + " × " + Math.round(m.h) + "）"
+        : "母版已丢失（可能来自旧文件）；实例内容仍可编辑。"));
+    const btn = el("button", "btn-full", "解除链接");
+    btn.type = "button";
+    btn.title = "把实例拆成独立形状，之后改它不会再与母版有任何关联";
+    btn.addEventListener("click", () => {
+      if (VX.Library) VX.Library.unlink(s.id);
+      render();
+    });
+    root.appendChild(btn);
+    root.appendChild(el("div", "panel-hint", "双击实例进入内部编辑：改文本/样式只作用于这个实例。"));
   }
 
   // ---------- 表格属性（P7） ----------
@@ -423,7 +525,15 @@
     } else {
       buildGeometry(list);
     }
-    buildText(list);
+    // 中继器/组件实例有自己的专用面板，不再走通用的图片/文本区块
+    if (list.length === 1 && list[0].type === "repeater") {
+      buildRepeater(list[0]);
+    } else if (list.length === 1 && list[0].type === "instance") {
+      buildInstance(list[0]);
+    } else {
+      buildImage(list);
+      buildText(list);
+    }
     root.appendChild(el("div", "panel-hint", "数值回车或失焦生效 · 所有修改可 Ctrl+Z 撤销"));
 
     sync();

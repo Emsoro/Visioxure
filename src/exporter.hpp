@@ -12,6 +12,9 @@ namespace vxex {
 // base64（允许 dataURL 风格：无填充、含空白与 "data:...;base64," 前缀）→ 原始字节；非法字符忽略
 std::string DecodeBase64(const std::string& text);
 
+// 原始字节 → base64（无填充）。图片读回 VSDX / 打开图片文件时用
+std::string EncodeBase64(const std::string& bytes);
+
 // 逐段 CreateDirectoryW 补齐父目录（导出到不存在的路径时不该直接失败）
 bool EnsureParentDir(const std::string& path);
 

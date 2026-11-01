@@ -104,6 +104,8 @@ window.addEventListener("error", (e) => {
 document.addEventListener("DOMContentLoaded", () => {
   VX.Model.init();
   VX.Editor.init();
+  if (VX.Images) VX.Images.init();       // 「插入 → 图片…」与拖放导入（P6.5 / S3）
+  if (VX.Library) VX.Library.init();     // 左栏「组件库」母版/实例（P6.5 / A3）
   if (VX.StylePanel) VX.StylePanel.init();
   if (VX.Props) VX.Props.init();
   if (VX.Inspect) VX.Inspect.init();
