@@ -43,14 +43,6 @@ std::wstring Utf8ToWide(const std::string& s) {
     return out;
 }
 
-std::string WideToUtf8(const std::wstring& s) {
-    if (s.empty()) return {};
-    int len = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0, nullptr, nullptr);
-    std::string out(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), out.data(), len, nullptr, nullptr);
-    return out;
-}
-
 bool ReadFileBytes(const std::string& path, std::string& out, std::string& err) {
     HANDLE h = CreateFileW(Utf8ToWide(path).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -171,6 +163,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         std::wstring wurl = Utf8ToWide(url);
         HINSTANCE r = ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return json{{"success", reinterpret_cast<INT_PTR>(r) > 32}};
+    });
+
+    // F5 预览：把前端生成的自包含 HTML 写进系统临时目录，再用默认浏览器打开（通常是新页签）。
+    // 单列一条窄命令，不放宽 app.open_url 的 http/https 白名单；路径完全由后端生成，
+    // 前端只传文件名与内容，避免把「打开本地路径」变成任意可调用的命令入口。
+    bridge.RegisterCommand("app.preview_html", [](const json& args) -> json {
+        std::string base64 = args.value("base64", std::string());
+        if (base64.empty()) return json{{"success", false}, {"error", "缺少预览内容"}};
+        std::string path = vxex::MakePreviewPath(args.value("name", std::string("未命名")));
+        if (path.empty()) return json{{"success", false}, {"error", "无法获取系统临时目录"}};
+        std::string bytes = vxex::DecodeBase64(base64);
+        std::string err;
+        if (!vxex::WriteOutputFile(path, bytes, err)) return json{{"success", false}, {"error", err}};
+        HINSTANCE r = ShellExecuteW(nullptr, L"open", Utf8ToWide(path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(r) <= 32) {
+            return json{{"success", false}, {"error", "预览文件已生成，但无法调用默认浏览器"}, {"path", path}};
+        }
+        return json{{"success", true}, {"path", path}, {"size", bytes.size()}};
     });
 
     // ---------- 文件对话框 ----------

@@ -56,7 +56,8 @@
       return (s.children || []).some((ch) => !ch.lock && inShape(ch, wx, wy));
     }
     if (s.type === "panel") {
-      if (!inAABB(s, wx, wy)) return false;
+      // 开启裁剪时视口外的溢出内容既看不到，也不该被点中
+      if (VX.Model.panelClip(s) && !inAABB(s, wx, wy)) return false;
       const st = VX.Model.panelState(s);
       return st ? (st.shapes || []).some((ch) => !ch.lock && inShape(ch, wx, wy)) : false;
     }
@@ -124,6 +125,8 @@
         if (ov && ov.visible === false) continue;
         const dx = (ov && ov.dx) || 0, dy = (ov && ov.dy) || 0;
         if (s.type === "panel") {
+          // 与渲染同口径：裁剪后框外的内容不可命中（交互位移先还原）
+          if (VX.Model.panelClip(s) && !inAABB(s, wx - dx, wy - dy)) continue;
           const stateId = ov && ov.state;
           const st = stateId ? (VX.Model.panelStateById(s, stateId) || VX.Model.panelState(s)) : VX.Model.panelState(s);
           const hit = this.inPage(st ? st.shapes : [], wx - dx, wy - dy, opts);

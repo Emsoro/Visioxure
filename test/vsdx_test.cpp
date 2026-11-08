@@ -3,6 +3,9 @@
 #include "vsdx/reader.hpp"
 #include "vsdx/writer.hpp"
 #include "vsdx/xml.hpp"
+#include "exporter.hpp"
+
+#include <Windows.h>
 
 #include <cmath>
 #include <cstdio>
@@ -288,6 +291,14 @@ json MakeBasicDoc() {
                              {"end", {{"x", 300}, {"y", 220}}},
                              {"route", "straight"}};
     p3["shapes"].push_back(noArrowConnector);
+    json panelState1 = {{"id", "st1"}, {"name", "状态 1"}, {"shapes", json::array()}};
+    json panelState2 = {{"id", "st2"}, {"name", "状态 2"},
+                        {"shapes", json::array({
+                            {{"id", "b4k1"}, {"type", "rect"}, {"x", 410}, {"y", 310},
+                             {"w", 30}, {"h", 20}}
+                        })}};
+    json setStateAction = {{"type", "setState"}, {"target", "b4"}, {"state", "cycle"},
+                           {"effect", "slide"}, {"direction", "up"}, {"duration", 250}};
     json panelShape = {{"id", "b4"},
                        {"type", "panel"},
                        {"x", 400},
@@ -296,9 +307,12 @@ json MakeBasicDoc() {
                        {"h", 80},
                        {"layer", "l1"},
                        {"style", style("#FFFFFF", "#999999")},
-                       {"panel", {{"action", "toggle"}, {"targets", json::array({"b1"})}}},
-                       {"interactions", json::array({{{"event", "onClick"}, {"action", "show"},
-                                                      {"target", "b2"}}})}};
+                       {"panel", {{"active", "st2"},
+                                  {"clip", false},
+                                  {"states", json::array({panelState1, panelState2})}}},
+                       {"interactions", json::array({
+                           {{"event", "click"}, {"actions", json::array({setStateAction})}}
+                       })}};
     p3["shapes"].push_back(panelShape);
 
     return json{{"format", "visioxure"},
@@ -383,8 +397,20 @@ void RunBasicScenarios() {
     json b4 = FindShape(s3, "b4");
     Check(!b4.is_null() && b4.value("type", "") == "panel", "b4 动态面板类型往返");
     if (!b4.is_null()) {
-        Check(Obj(b4, "panel").value("action", "") == "toggle", "b4 面板配置往返");
-        Check(b4.value("interactions", json::array()).size() == 1, "b4 交互事件往返");
+        json panel = Obj(b4, "panel");
+        Check(panel.value("active", "") == "st2", "b4 面板激活状态往返");
+        Check(panel.value("clip", true) == false, "b4 面板裁剪开关往返");
+        Check(panel.value("states", json::array()).size() == 2 &&
+              panel["states"][1].value("shapes", json::array()).size() == 1,
+              "b4 面板多状态及状态内形状往返");
+        json inter = b4.value("interactions", json::array());
+        Check(inter.size() == 1 && inter[0].value("actions", json::array()).size() == 1,
+              "b4 交互事件往返");
+        if (!inter.empty() && inter[0].contains("actions") && !inter[0]["actions"].empty()) {
+            json act = inter[0]["actions"][0];
+            Check(act.value("effect", "") == "slide" && act.value("direction", "") == "up" &&
+                  act.value("duration", 0) == 250, "b4 状态切换动效参数往返");
+        }
         // 交互 / 面板目标按 id 字符串引用，id 不一致会导致跳转失效
         Check(!FindShape(s3, "b2").is_null(), "b4 交互目标 b2 可解析");
     }
@@ -462,6 +488,39 @@ void RunBasicScenarios() {
         vsx::XmlNode bad;
         Check(!vsx::ParseXml("<A><B></A>", bad, xe), "标签不匹配报错");
         Check(!vsx::ParseXml("", bad, xe), "空 XML 报错");
+    }
+
+    // F5 预览：临时 HTML 路径生成 + 真实写盘（不调用 ShellExecute，避免测试弹出浏览器）
+    std::printf("8) 浏览器预览临时文件\n");
+    {
+        std::string p = vxex::MakePreviewPath("动态面板 测试/预览:*?");
+        Check(!p.empty(), "预览临时路径生成成功");
+        Check(p.size() >= 5 && p.substr(p.size() - 5) == ".html", "预览临时路径以 .html 结尾");
+        Check(p.find("Visioxure_") != std::string::npos, "预览临时路径带工程前缀");
+        Check(p.find('/') == std::string::npos && p.find('\\') != std::string::npos,
+              "预览文件落在系统临时目录");
+        Check(p.find(":*") == std::string::npos && p.find("测试_预览") != std::string::npos,
+              "预览文件名已过滤非法字符");
+        if (!p.empty()) {
+            std::string err;
+            const std::string html = "<!doctype html><html><body>预览测试</body></html>";
+            Check(vxex::WriteOutputFile(p, html, err), "预览 HTML 可写入临时目录");
+            int wl = MultiByteToWideChar(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), nullptr, 0);
+            std::wstring wp(wl, L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), wp.data(), wl);
+            HANDLE h = CreateFileW(wp.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Check(h != INVALID_HANDLE_VALUE, "临时预览文件确实落盘");
+            if (h != INVALID_HANDLE_VALUE) {
+                char buf[128]{};
+                DWORD rd = 0;
+                ReadFile(h, buf, sizeof(buf) - 1, &rd, nullptr);
+                CloseHandle(h);
+                Check(std::string(buf, rd).find("预览测试") != std::string::npos,
+                      "临时预览文件内容正确");
+                DeleteFileW(wp.c_str());
+            }
+        }
     }
 }
 

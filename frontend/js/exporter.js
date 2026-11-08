@@ -147,6 +147,39 @@
       `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}Z`;
   }
 
+  // ---------- F5 / 菜单「预览」：导出到临时目录并交给默认浏览器 ----------
+  // 与「导出 HTML」的区别：不弹保存对话框；桌面端由 app.preview_html 一次完成写盘 + 打开，
+  // 浏览器直开（dev server / e2e）没有文件系统，退化成 Blob URL 的新页签。
+  let previewBusy = false;
+  async function previewInBrowser() {
+    if (previewBusy) return;
+    previewBusy = true;
+    try {
+      status("正在生成浏览器预览 …");
+      const text = await VX.ExportHtml.build(VX.Model.serialize(), { title: stem() });
+      const b = bridge();
+      if (!b) {
+        const url = URL.createObjectURL(new Blob([text], { type: "text/html;charset=utf-8" }));
+        const win = window.open(url, "_blank", "noopener");
+        if (!win) { URL.revokeObjectURL(url); throw new Error("浏览器拦截了新页签，请允许弹出窗口"); }
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        status("预览已在新页签打开（浏览器模式，未写入临时目录）");
+        return;
+      }
+      const r = await b.invoke("app.preview_html", {
+        name: sanitize(stem()),
+        base64: b64FromText(text),
+      });
+      if (!r || !r.success) throw new Error(r && r.error ? r.error : "预览失败");
+      status(`预览已在新页签打开：${String(r.path || "").replace(/^.*[\\/]/, "")}` +
+        `（${Math.max(1, Math.round((r.size || 0) / 1024))} KB）`);
+    } catch (e) {
+      fail("预览", e);
+    } finally {
+      previewBusy = false;
+    }
+  }
+
   // ---------- 菜单 ----------
   const ACTIONS = {
     "export-png": () => toPng(1, false),
@@ -175,6 +208,7 @@
   VX.Exporter = {
     init: initMenu,
     toPng, toSvg, toHtml, toPdf,
+    previewInBrowser,
     // 不落盘直接取产物（验收脚本与调试用）：page 缺省为当前页
     raw: {
       png: (opt) => VX.ExportPng.png(opt && opt.page ? opt.page : VX.Model.page(), opt || {}),

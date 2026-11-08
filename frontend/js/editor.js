@@ -148,7 +148,12 @@
         VX.Renderer.invalidate();
         return;
       }
-      if (e.key === "F5") { e.preventDefault(); if (VX.Preview) VX.Preview.open(); return; }
+      // F5：把工程导出成临时 HTML 并用默认浏览器新页签打开（与菜单栏「预览」按钮同入口）
+      if (e.key === "F5") {
+        e.preventDefault();
+        if (VX.Exporter && VX.Exporter.previewInBrowser) VX.Exporter.previewInBrowser();
+        return;
+      }
       if (e.key === "F2" && S().selection.length === 1) {
         VX.Tools.openTextEditor(VX.Model.shape(S().selection[0]));
         return;
@@ -492,10 +497,20 @@
     const nameEl = document.getElementById("status-page-name");
     if (nameEl) {
       const pg = VX.Model.page();
-      nameEl.textContent = pg ? pg.name : "—";
-      nameEl.parentElement.title = pg
-        ? "当前编辑的页面：" + pg.name + "（点击切到左侧「页面树」）"
-        : "当前编辑的页面 · 点击切到左侧「页面树」";
+      const pe = S().panelEdit;
+      const panel = pe ? VX.Model.shape(pe.panelId) : null;
+      if (pg && panel && panel.type === "panel") {
+        // 状态编辑时状态栏给出面包屑：页面 › 面板名 › 状态名
+        const st = VX.Model.panelStateById(panel, pe.stateId) || VX.Model.panelState(panel);
+        const crumb = pg.name + " › " + VX.Model.panelName(panel) + " › " + (st ? st.name : "—");
+        nameEl.textContent = crumb;
+        nameEl.parentElement.title = "当前编辑：" + crumb + "（Esc 返回页面）";
+      } else {
+        nameEl.textContent = pg ? pg.name : "—";
+        nameEl.parentElement.title = pg
+          ? "当前编辑的页面：" + pg.name + "（点击切到左侧「页面树」）"
+          : "当前编辑的页面 · 点击切到左侧「页面树」";
+      }
     }
     const g = document.getElementById("status-grid");
     if (g) g.textContent = "网格 " + (GRID_NAME[S().gridKind] || "小");
@@ -647,6 +662,7 @@
       VX.Model.on("pagechange", renderPageTree);
       VX.Model.on("pagechange", updateStatus);   // 状态栏的当前页名跟着切页 / 改名刷新
       VX.Model.on("selection", updateStatus);
+      VX.Events.on("paneledit", updateStatus);
       VX.Events.on("zoom", updateStatus);
       VX.Events.on("history", syncUndoRedo);
       VX.Events.on("tool", syncToolButtons);

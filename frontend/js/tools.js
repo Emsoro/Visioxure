@@ -382,9 +382,10 @@
         for (const p of drag.start) {
           const s = VX.Model.shape(p.id);
           if (!s) continue;
-          if (s.type === "group") {
+          if (s.type === "group" || s.type === "instance" || s.type === "panel") {
+            // 容器子形状是世界坐标：整体平移（面板要带动全部状态）
             const ddx = p.x + dx - s.x, ddy = p.y + dy - s.y;
-            VX.Model.moveShapeBy(s, ddx, ddy); // 组：递归平移子形状
+            VX.Model.moveShapeBy(s, ddx, ddy);
           } else {
             VX.Model.updateShape(p.id, { x: p.x + dx, y: p.y + dy });
           }

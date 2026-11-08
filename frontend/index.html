@@ -38,6 +38,10 @@
           <div class="menu-entry" data-act="export-pdf" title="整个工程 · 每页一张，页面顺序与页面树一致">导出 PDF（整个工程）</div>
         </div>
       </span>
+      <button class="menu-preview" id="btn-preview" type="button" title="把当前工程导出为 HTML 到系统临时目录，并用默认浏览器新页签打开">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2l10 6-10 6z"/></svg>
+        预览 <span class="menu-key">F5</span>
+      </button>
     </nav>
     <div class="menubar-right">
       <span id="doc-title">未命名.vsdx</span>
@@ -101,13 +105,16 @@
       <div class="panel-body hidden" data-tab-page="components" id="library-panel"></div>
     </aside>
 
-    <!-- 画布区域 -->
-    <div id="canvas-area">
-      <div id="ruler-corner"></div>
-      <canvas id="ruler-top" height="22"></canvas>
-      <canvas id="ruler-left" width="22"></canvas>
-      <div id="canvas-scroll">
-        <canvas id="canvas">您的浏览器不支持 Canvas</canvas>
+    <!-- 画布区域：文档页签（页面 / 动态面板状态编辑）+ 标尺 + 画布 -->
+    <div id="canvas-wrap">
+      <div id="doc-tabs" class="doc-tabs"></div>
+      <div id="canvas-area">
+        <div id="ruler-corner"></div>
+        <canvas id="ruler-top" height="22"></canvas>
+        <canvas id="ruler-left" width="22"></canvas>
+        <div id="canvas-scroll">
+          <canvas id="canvas">您的浏览器不支持 Canvas</canvas>
+        </div>
       </div>
     </div>
 
@@ -148,7 +155,7 @@
     <span class="status-sep">|</span>
     <span>选中 <b id="status-sel">0</b></span>
     <span class="status-right">
-      <span id="app-version" title="Visioxure 版本号">v1.1.0</span>
+      <span id="app-version" title="Visioxure 版本号">v1.2.0</span>
       <!-- 品牌链接（内容取自 logo.txt）：版本号右侧，点击用系统默认浏览器打开仓库 -->
       <span class="logo" id="brand-links" title="开源仓库">
         <a class="git-link" data-url="https://github.com/Emsoro/Visioxure" title="GitHub（在浏览器中打开）">
@@ -184,6 +191,7 @@
 <script src="js/interact.js"></script>
 <script src="js/preview.js"></script>
 <script src="js/inspect.js"></script>
+<script src="js/doctabs.js"></script>
 <script src="js/images.js"></script>
 <script src="js/meta.js"></script>
 <script src="js/page.js"></script>

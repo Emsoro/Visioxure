@@ -4,7 +4,7 @@
 
 (function () {
   let root = null, canvas = null, ctx = null, stage = null;
-  let rt = null, raf = 0, lastT = 0, dirty = true;
+  let rt = null, raf = 0, lastT = 0, dirty = true, resizeObs = null;
   let hoverId = null;
   let view = { zoom: 1, ox: 0, oy: 0 };
 
@@ -20,7 +20,8 @@
 
   // 页面等比适配舞台
   function fit() {
-    const p = rt.page();
+    // 关闭预览后 ResizeObserver 还可能回调一帧：rt/stage 已清空，必须提前退出
+    const p = rt && rt.page();
     if (!p || !stage) return;
     const availW = Math.max(80, stage.clientWidth - 48);
     const availH = Math.max(80, stage.clientHeight - 48);
@@ -121,7 +122,8 @@
       }
     });
     window.addEventListener("keydown", onKey, true);
-    new ResizeObserver(() => fit()).observe(stage);
+    resizeObs = new ResizeObserver(() => fit());
+    resizeObs.observe(stage);
   }
 
   function onKey(e) {
@@ -132,11 +134,13 @@
       close();
       return;
     }
-    if (e.key === "F5") { e.preventDefault(); return; }
+    // F5 交给编辑器的全局监听统一处理「浏览器预览」；这里只跳过预览内的 keydown 派发，
+    // 不 preventDefault / stopPropagation，避免拦截编辑器的导出动作
+    if (e.key === "F5") return;
     // 键盘事件：派发给配置了 keydown 交互的形状
     const p = rt && rt.page();
     if (!p) return;
-    VX.Interact.walk(p.shapes, (s) => {
+    rt.walk(p.shapes, (s) => {
       if ((s.interactions || []).some((i) => i.event === "keydown")) rt.dispatch(s, "keydown");
     });
     afterDispatch();
@@ -177,6 +181,7 @@
     cancelAnimationFrame(raf);
     raf = 0;
     window.removeEventListener("keydown", onKey, true);
+    if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
     root.remove();
     root = null;
     canvas = null;

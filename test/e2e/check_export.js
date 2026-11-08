@@ -470,6 +470,68 @@ const FIXTURE = {
   check(wired.has && wired.clicked === "export-svg", "导出菜单项已接线", JSON.stringify(wired));
   check(wired.status === "", "无 Bridge 时取消路径不报错（不污染状态栏）", JSON.stringify(wired.status));
 
+  // ---------- 7. 菜单栏「预览」按钮 / F5：临时 HTML + 默认浏览器 ----------
+  const menuBtn = await p.evaluate(() => {
+    const btn = document.getElementById("btn-preview");
+    const menus = document.querySelector(".menus");
+    return { exists: !!btn, last: !!menus && menus.lastElementChild === btn,
+      text: btn ? btn.textContent.replace(/\s+/g, " ").trim() : "" };
+  });
+  check(menuBtn.exists && menuBtn.last && menuBtn.text.includes("预览") && menuBtn.text.includes("F5"),
+    "菜单栏最右侧有「预览」按钮并标注 F5", JSON.stringify(menuBtn));
+
+  const previewRes = await p.evaluate(async () => {
+    const calls = [];
+    window.__tauricpp__ = {
+      invoke: async (cmd, args) => {
+        calls.push({ cmd, name: args && args.name, base64: args && args.base64 });
+        return cmd === "app.preview_html"
+          ? { success: true, path: "C:/Temp/Visioxure_demo.html", size: 12345 }
+          : { success: true };
+      },
+    };
+    await VX.Exporter.previewInBrowser();
+    const call = calls[0];
+    let html = "";
+    if (call && call.base64) {
+      const bin = atob(call.base64);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      html = new TextDecoder().decode(u8);
+    }
+    const statusBridge = document.getElementById("status-msg").textContent;
+
+    // 按钮与 F5 都应调用同一个入口（用计数包装，避开异步导出时序）
+    const orig = VX.Exporter.previewInBrowser;
+    let invoked = 0;
+    VX.Exporter.previewInBrowser = () => { invoked++; };
+    document.getElementById("btn-preview").click();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F5", bubbles: true, cancelable: true }));
+    VX.Exporter.previewInBrowser = orig;
+
+    // 无 Bridge：退化为 Blob URL 的新页签
+    delete window.__tauricpp__;
+    const opened = [];
+    const origOpen = window.open;
+    window.open = (url, target) => { opened.push({ url, target }); return {}; };
+    await VX.Exporter.previewInBrowser();
+    window.open = origOpen;
+    return {
+      cmd: call && call.cmd, name: call && call.name,
+      hasDoc: html.includes('id="vx-doc"'), hasTag: html.includes("panel-state-v2"),
+      statusBridge, invoked,
+      fallback: opened[0] || null,
+      statusFallback: document.getElementById("status-msg").textContent,
+    };
+  });
+  check(previewRes.cmd === "app.preview_html" && !!previewRes.name && previewRes.hasDoc && previewRes.hasTag,
+    "预览走 app.preview_html，payload 是最新自包含 HTML", JSON.stringify({ ...previewRes, statusFallback: undefined }));
+  check(previewRes.statusBridge.includes("新页签"), "预览成功后状态栏反馈", previewRes.statusBridge);
+  check(previewRes.invoked === 2, "预览按钮与 F5 都接到同一入口", JSON.stringify(previewRes.invoked));
+  check(previewRes.fallback && previewRes.fallback.url.startsWith("blob:") && previewRes.fallback.target === "_blank" &&
+        previewRes.statusFallback.includes("新页签"),
+    "无 Bridge 时用 Blob URL 在新页签打开", JSON.stringify(previewRes.fallback));
+
   check(errors.length === 0, "编辑器侧无脚本异常", errors.slice(0, 3).join(" | "));
 
   console.log(failed ? "\nRESULT: " + failed + " 项失败" : "\nRESULT: 全部通过");

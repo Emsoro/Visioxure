@@ -37,8 +37,8 @@
     return String(Math.round(v * p) / p);
   }
 
-  // 可编辑目标：展开组合、展开动态面板的当前状态（与画布所见一致）。
-  // 组本身不带几何编辑语义（改 x 不会带动子形状），所以只暴露叶子形状。
+  // 可编辑目标：展开组合（组本身不带几何编辑语义），动态面板保留容器自身
+  // ——面板有自己的几何/裁剪属性区，展开成子形状会让「改 X」误改到内容上
   function targets() {
     const out = [];
     const seen = new Set();
@@ -47,11 +47,6 @@
       seen.add(s.id);
       if (s.type === "group") {
         for (const ch of s.children || []) walk(ch);
-        return;
-      }
-      if (s.type === "panel") {
-        const st = VX.Model.panelState(s);
-        for (const ch of (st && st.shapes) || []) walk(ch);
         return;
       }
       out.push(s);
@@ -79,6 +74,13 @@
     if (S().selection.length !== 1) return null;
     const s = VX.Model.shape(S().selection[0]);
     return (VX.Table && VX.Table.isTable(s)) ? s : null;
+  }
+
+  // 动态面板是容器：选中它时显示面板自身的位置/尺寸/裁剪，而不是当前状态的叶子形状
+  function panelTarget() {
+    if (S().selection.length !== 1) return null;
+    const s = VX.Model.shape(S().selection[0]);
+    return s && s.type === "panel" ? s : null;
   }
 
   // 统一提交口：一次修改 = 一条撤销记录；提交后刷新其它面板与画布
@@ -278,8 +280,9 @@
     wrap.appendChild(el("div", "prop-section", "位置与大小"));
     // 组合/组件实例的子形状是世界坐标：改位置要连带平移子形状，否则内容会留在原地
     const moveTo = (s, v, axis) => {
-      if (s.type === "group" || s.type === "instance") VX.Model.moveShapeBy(s, axis === "x" ? v - s.x : 0, axis === "y" ? v - s.y : 0);
-      else s[axis] = v;
+      if (s.type === "group" || s.type === "instance" || s.type === "panel") {
+        VX.Model.moveShapeBy(s, axis === "x" ? v - s.x : 0, axis === "y" ? v - s.y : 0);
+      } else s[axis] = v;
     };
     wrap.appendChild(numberRow({
       label: "X", unit: "px", digits: 1, action: "修改位置",
@@ -493,6 +496,93 @@
       (s, v) => T.setHeader(s, v), one));
   }
 
+  // ---------- 动态面板属性 ----------
+  // 面板是「视口」：移动带动全部状态的内容，宽高只改视口范围（不缩放内容）
+  function buildPanel(s) {
+    VX.Model.normalizePanel(s);
+    const one = () => [s];
+
+    root.appendChild(el("div", "prop-section", "动态面板"));
+    const nameRow = el("div", "sp-row");
+    nameRow.appendChild(el("span", "sp-label", "名称"));
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "sp-text";
+    nameInput.value = VX.Model.panelName(s);
+    nameInput.title = "状态编辑页签上显示的名称";
+    nameInput.addEventListener("keydown", (e) => { if (!(e.ctrlKey || e.metaKey)) e.stopPropagation(); });
+    nameInput.addEventListener("change", () => {
+      const v = nameInput.value.trim();
+      commit("重命名动态面板", () => { s.name = v || VX.Model.panelName(s); });
+    });
+    nameRow.appendChild(nameInput);
+    root.appendChild(nameRow);
+
+    const geo = document.createDocumentFragment();
+    geo.appendChild(el("div", "prop-section", "位置与大小"));
+    geo.appendChild(numberRow({
+      label: "X", unit: "px", digits: 1, action: "修改位置", list: one,
+      get: (x) => x.x, set: (x, v) => VX.Model.moveShapeBy(x, v - x.x, 0),
+      title: "视口左上角 X；移动会带动全部状态内的形状",
+    }));
+    geo.appendChild(numberRow({
+      label: "Y", unit: "px", digits: 1, action: "修改位置", list: one,
+      get: (x) => x.y, set: (x, v) => VX.Model.moveShapeBy(x, 0, v - x.y),
+      title: "视口左上角 Y；移动会带动全部状态内的形状",
+    }));
+    geo.appendChild(numberRow({
+      label: "宽", unit: "px", digits: 1, min: 4, action: "修改尺寸", list: one,
+      get: (x) => x.w, set: (x, v) => { x.w = Math.max(4, v); },
+      title: "只改变视口宽度，不缩放状态内容",
+    }));
+    geo.appendChild(numberRow({
+      label: "高", unit: "px", digits: 1, min: 4, action: "修改尺寸", list: one,
+      get: (x) => x.h, set: (x, v) => { x.h = Math.max(4, v); },
+      title: "只改变视口高度，不缩放状态内容",
+    }));
+    root.appendChild(geo);
+
+    root.appendChild(el("div", "prop-section", "视口与状态"));
+    root.appendChild(segRow("内容裁剪",
+      [{ v: true, t: "裁剪" }, { v: false, t: "不裁剪" }],
+      (x) => VX.Model.panelClip(x),
+      (x, v) => { x.panel.clip = v; }, one));
+    const fit = el("button", "btn-full", "适应内容尺寸");
+    fit.type = "button";
+    fit.title = "把视口调整为全部状态内容的包围盒并集（内容保持不动）";
+    fit.addEventListener("click", () => {
+      commit("面板适应内容尺寸", () => VX.Model.fitPanelToContent(s));
+    });
+    root.appendChild(fit);
+
+    const editing = VX.state.panelEdit && VX.state.panelEdit.panelId === s.id;
+    const editBtn = el("button", "btn-full", editing ? "退出状态编辑" : "进入状态编辑（打开页签）");
+    editBtn.type = "button";
+    editBtn.title = "在画布上方打开这个动态面板的状态编辑页签";
+    editBtn.addEventListener("click", () => {
+      const st = VX.Model.panelState(s);
+      VX.state.panelEdit = editing ? null : { panelId: s.id, stateId: st ? st.id : null };
+      VX.state.selection = [];
+      VX.Events.emit("paneledit");
+      VX.Events.emit("selection");
+      VX.Renderer.invalidate();
+      render();
+    });
+    root.appendChild(editBtn);
+
+    const states = VX.Model.panelStates(s);
+    const cur = VX.Model.panelState(s);
+    root.appendChild(el("div", "panel-hint",
+      `${states.length} 个状态 · 当前 ${cur ? cur.name : "—"}；状态的新增/复制/排序与切换在「交互」面板。`));
+    root.appendChild(el("div", "panel-hint",
+      "双击面板或点上方按钮打开状态编辑页签；移动面板会带动全部状态内容，改尺寸只改变视口，不缩放内容。"));
+    if (VX.Model.panelClip(s)) {
+      root.appendChild(el("div", "panel-hint",
+        "已开启裁剪：视口外的内容不会显示、也不会被点中。旧文档里坐标漂移的内容可关掉裁剪，或用「适应内容尺寸」对齐。"));
+    }
+    root.appendChild(el("div", "panel-hint", "数值回车或失焦生效 · 所有修改可 Ctrl+Z 撤销"));
+  }
+
   function render() {
     if (!root) return;
     const list = targets();
@@ -508,7 +598,8 @@
 
     const head = el("div", "sp-head");
     const tb = tableTarget();
-    head.textContent = tb ? "表格"
+    const pnl = panelTarget();
+    head.textContent = tb ? "表格" : pnl ? "动态面板"
       : list.length === 1 ? (TYPE_NAMES[list[0].type] || list[0].type)
       : list.length + " 个对象";
     root.appendChild(head);
@@ -516,6 +607,11 @@
     if (tb) {
       buildTable(tb);
       root.appendChild(el("div", "panel-hint", "双击表格进入组合，再双击单元格可改文字 · 行列数改动可 Ctrl+Z 撤销"));
+      sync();
+      return;
+    }
+    if (pnl) {
+      buildPanel(pnl);
       sync();
       return;
     }

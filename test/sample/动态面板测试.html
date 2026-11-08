@@ -1,0 +1,3782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="visioxure-runtime" content="panel-state-v2">
+<title>动态面板测试</title>
+<!-- 由 Visioxure 导出（运行时 panel-state-v2）：形状渲染与交互运行时均取自编辑器同一份代码，勿手工改本文件 -->
+<style>/* Visioxure 编辑器布局（P0 静态稿）
+   亮色主题；主题变量集中在 :root，后续 themes.css 扩展暗色 */
+:root {
+  --chrome-bg: #f5f6f8;
+  --chrome-border: #d8dbe0;
+  --panel-bg: #ffffff;
+  --canvas-bg: #e9ebee;
+  --text: #2c3038;
+  --text-dim: #7a8089;
+  --accent: #2f6fed;
+  --accent-soft: #e3ecff;
+  --hover: rgba(0, 0, 0, 0.05);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+html, body, #app { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--chrome-bg);
+}
+
+#app {
+  display: grid;
+  grid-template-rows: 32px 40px 1fr 24px;
+}
+
+/* ===== 菜单栏 ===== */
+#menubar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+}
+/* 状态栏右端：品牌链接（GitHub / Gitee 图标），点击由后端用系统浏览器打开 */
+.logo { display: flex; align-items: center; gap: 2px; }
+.logo .git-link {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 5px;
+  color: var(--text-dim); cursor: pointer;
+}
+.logo .git-link:hover { background: var(--hover); color: var(--accent); }
+.logo .git-link svg { width: 14px; height: 14px; display: block; }
+.menus { display: flex; gap: 2px; }
+.menu-item { padding: 4px 9px; border-radius: 4px; cursor: default; }
+.menu-item:hover { background: var(--hover); }
+.menubar-right { margin-left: auto; color: var(--text-dim); }
+
+/* ===== 工具栏 ===== */
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--chrome-border);
+  background: var(--panel-bg);
+}
+.tool-group { display: flex; align-items: center; gap: 3px; }
+.tool-sep { width: 1px; height: 20px; background: var(--chrome-border); margin: 0 6px; }
+.tool-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 5px;
+  background: transparent; cursor: pointer;
+}
+.tool-btn svg { width: 16px; height: 16px; fill: var(--text); stroke: none; }
+.tool-btn:hover { background: var(--hover); }
+.tool-btn.active { background: var(--accent-soft); }
+.tool-btn.active svg { fill: var(--accent); }
+#zoom-label { min-width: 42px; text-align: center; color: var(--text-dim); }
+
+/* ===== 主区域 ===== */
+#main {
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  min-height: 0;
+}
+
+/* --- 侧栏 --- */
+#left-panel, #right-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  min-height: 0;
+}
+#left-panel { border-right: 1px solid var(--chrome-border); }
+#right-panel { border-left: 1px solid var(--chrome-border); }
+
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+}
+.panel-tab {
+  padding: 7px 8px;
+  cursor: pointer;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  /* 右侧 6 个 Tab（属性/样式/交互/注释/图层/页面）在 280px 内不能折行 */
+  white-space: nowrap;
+  flex: none;
+}
+.panel-tab:hover { color: var(--text); }
+.panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--panel-bg); }
+
+/* 右侧面板折叠 */
+.panel-collapse {
+  margin-left: auto; flex: none; width: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; color: var(--text-dim);
+  cursor: pointer; border-radius: 4px;
+}
+.panel-collapse:hover { background: var(--hover); color: var(--text); }
+.panel-collapse svg { width: 14px; height: 14px; transition: transform 0.15s ease; }
+#main.right-collapsed { grid-template-columns: 240px 1fr 30px; }
+#right-panel.collapsed .panel-tab,
+#right-panel.collapsed .panel-body { display: none; }
+#right-panel.collapsed .panel-tabs { justify-content: center; border-bottom: 0; }
+#right-panel.collapsed .panel-collapse { margin-left: 0; }
+#right-panel.collapsed .panel-collapse svg { transform: rotate(180deg); }
+
+.panel-body { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
+.hidden { display: none !important; }
+.panel-hint { color: var(--text-dim); font-size: 11px; padding: 10px 4px; line-height: 1.7; }
+
+/* 页面树 / 图层树 */
+.tree-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 5px; cursor: default;
+}
+.tree-item:hover { background: var(--hover); }
+.tree-item.active { background: var(--accent-soft); color: var(--accent); }
+.tree-icon { width: 12px; height: 12px; flex: none; }
+.tree-icon.page { border: 1.5px solid var(--text-dim); border-radius: 2px; background: #fff; }
+.tree-icon.layer { border-radius: 50%; border: 1.5px solid var(--text-dim); }
+
+/* 页面树：顶部新增按钮 + 行首拖拽把手（代替原来那个像勾选框的页图标） */
+.page-add {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; height: 26px; margin-bottom: 6px;
+  border: 1px solid var(--chrome-border); border-radius: 5px;
+  background: var(--panel-bg); color: var(--text); font-size: 12px; cursor: pointer;
+}
+.page-add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.page-add svg { flex: none; }
+
+.drag-handle {
+  display: flex; align-items: center; justify-content: center;
+  width: 10px; height: 16px; flex: none;
+  color: var(--text-dim); opacity: .55; cursor: grab;
+}
+.drag-handle:hover { opacity: 1; color: var(--accent); }
+.drag-handle:active { cursor: grabbing; }
+.tree-item.dragging { opacity: .4; }
+
+/* 拖拽插入位置提示线：由脚本按行高定位到 top */
+#page-tree { position: relative; }
+.page-drop-line {
+  position: absolute; left: 4px; right: 4px; height: 2px;
+  background: var(--accent); border-radius: 1px; pointer-events: none;
+}
+
+/* 形状库：缩略图卡片 + 分类标题（色板与 stencils.js 的 SK 保持一致） */
+.stencil-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.stencil-cat {
+  display: flex; align-items: center; gap: 6px;
+  margin: 10px 0 6px; padding: 0 2px 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-dim);
+  border-bottom: 1px solid var(--chrome-border);
+}
+.stencil-cat:first-child { margin-top: 0; }
+.stencil-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 0; padding: 6px 4px 5px;
+  border: 1px solid var(--chrome-border); border-radius: 7px; background: #fff;
+  cursor: grab;
+  transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
+}
+.stencil-item:hover {
+  border-color: rgba(47, 111, 237, .45); background: var(--accent-soft);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+}
+.stencil-item:active { box-shadow: inset 0 1px 2px rgba(15, 23, 42, .14); }
+.stencil-item canvas { display: block; width: 100%; height: auto; }
+.stencil-name {
+  width: 100%; text-align: center;
+  font-size: 11px; line-height: 14px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stencil-item:hover .stencil-name { color: var(--accent); }
+
+/* 形状库拖拽：跟随光标的缩略图 + 画布落点提示框 */
+body.stencil-dragging, body.stencil-dragging * { cursor: grabbing !important; user-select: none; }
+.stencil-ghost {
+  position: fixed; z-index: 4000; width: 72px; height: 48px;
+  transform: translate(-50%, -50%); opacity: .85; pointer-events: none;
+  filter: drop-shadow(0 4px 10px rgba(15, 23, 42, .28));
+}
+.stencil-ghost canvas { display: block; width: 100%; height: 100%; }
+#canvas.stencil-drop { outline: 2px dashed rgba(47, 111, 237, .6); outline-offset: -2px; }
+
+/* 组件库（A3）：母版列表 + 拖拽幽灵 */
+.lib-head { padding: 4px 4px 2px; }
+.lib-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px; margin: 4px 2px;
+  border: 1px solid var(--chrome-border); border-radius: 7px; background: #fff;
+  cursor: grab;
+  transition: border-color .12s ease, background-color .12s ease;
+}
+.lib-item:hover { border-color: rgba(47, 111, 237, .45); background: var(--accent-soft); }
+.lib-info { flex: 1 1 auto; min-width: 0; }
+.lib-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-dim { font-size: 11px; color: var(--text-dim); }
+.lib-btn {
+  flex: none; height: 22px; padding: 0 8px;
+  border: 1px solid var(--chrome-border); border-radius: 5px; background: #fff;
+  color: var(--text-dim); font-size: 11px; cursor: pointer;
+}
+.lib-btn:hover { color: var(--accent); border-color: var(--accent); }
+.lib-del { padding: 0 6px; }
+.lib-del:hover { color: #c0392b; border-color: #c0392b; }
+body.lib-dragging, body.lib-dragging * { cursor: grabbing !important; user-select: none; }
+.lib-ghost {
+  position: fixed; z-index: 4000;
+  transform: translate(-50%, -50%); padding: 4px 10px;
+  border: 1px dashed var(--accent); border-radius: 6px; background: #fff;
+  color: var(--accent); font-size: 12px; opacity: .9; pointer-events: none;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, .18);
+}
+
+/* 属性面板 */
+.prop-empty { color: var(--text-dim); text-align: center; padding: 14px 0; }
+.prop-section { font-weight: 600; margin: 12px 2px 6px; }
+.prop-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.prop-label { color: var(--text-dim); width: 40px; flex: none; }
+.prop-value { color: var(--text-dim); }
+.color-chip { width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--chrome-border); }
+
+/* ===== 画布区域 ===== */
+/* 画布上方的文档页签：页面 + 动态面板状态编辑（Axure 式） */
+#canvas-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.doc-tabs {
+  display: flex; align-items: stretch; flex: none; height: 28px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  background: var(--chrome-bg); border-bottom: 1px solid var(--chrome-border);
+}
+.doc-tabs::-webkit-scrollbar { display: none; }
+.doc-tab {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  padding: 0 10px; max-width: 260px; cursor: pointer;
+  border-right: 1px solid var(--chrome-border); border-bottom: 2px solid transparent;
+  color: var(--text-dim); font-size: 12px; white-space: nowrap;
+}
+.doc-tab:hover { background: var(--hover); color: var(--text); }
+.doc-tab.active { background: var(--panel-bg); color: var(--accent); border-bottom-color: var(--accent); }
+.doc-tab-page { font-weight: 600; }
+.doc-tab-label { overflow: hidden; text-overflow: ellipsis; }
+.doc-tab-state {
+  font-size: 11px; color: var(--text-dim); padding: 1px 5px; border-radius: 3px;
+  background: var(--hover); overflow: hidden; text-overflow: ellipsis; max-width: 90px;
+}
+.doc-tab.active .doc-tab-state { color: var(--accent); background: var(--accent-soft); }
+.doc-tab-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 3px; font-size: 14px; line-height: 1;
+}
+.doc-tab-close:hover { background: var(--accent-soft); color: var(--accent); }
+
+#canvas-area {
+  position: relative;
+  flex: 1;
+  display: grid;
+  /* minmax(0,1fr)：防止画布内容反撑网格轨道（否则与 JS 同步 canvas 尺寸形成正反馈，尺寸膨胀至崩溃） */
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-rows: 22px minmax(0, 1fr);
+  background: var(--canvas-bg);
+  min-width: 0; min-height: 0;
+}
+#ruler-corner {
+  grid-column: 1; grid-row: 1;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--chrome-border);
+  border-bottom: 1px solid var(--chrome-border);
+}
+#ruler-top { grid-column: 2; grid-row: 1; width: 100%; display: block; }
+#ruler-left { grid-column: 1; grid-row: 2; height: 100%; display: block; }
+#canvas-scroll {
+  grid-column: 2; grid-row: 2;
+  overflow: hidden;
+  position: relative;
+}
+/* 绝对定位：canvas 不参与文档流，尺寸只由 JS 依据容器写入，杜绝互相撑大 */
+#canvas { display: block; position: absolute; left: 0; top: 0; }
+
+/* 右键菜单 */
+.ctx-menu {
+  position: fixed; z-index: 3000; min-width: 128px; padding: 4px;
+  background: #fff; border: 1px solid var(--chrome-border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14); font-size: 12px;
+}
+.ctx-menu .ctx-item { padding: 6px 10px; border-radius: 5px; cursor: default; color: var(--text); }
+.ctx-menu .ctx-item:hover { background: var(--hover); }
+.ctx-menu .ctx-item.disabled { color: var(--text-dim); opacity: 0.45; }
+.ctx-menu .ctx-item.disabled:hover { background: transparent; }
+.ctx-menu .ctx-sep { height: 1px; margin: 4px 6px; background: var(--chrome-border); }
+
+/* ===== 状态栏 ===== */
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-top: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text-dim);
+}
+#statusbar b { color: var(--text); font-weight: 600; }
+.status-sep { color: var(--chrome-border); }
+/* 右下角版本号 + 品牌链接：贴右、低调，不抢状态信息 */
+.status-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+/* 版本号：胶囊形描边包住，和右侧仓库图标区分开 */
+#app-version {
+  display: inline-flex; align-items: center;
+  height: 17px; padding: 0 7px;
+  border: 1px solid var(--chrome-border); border-radius: 9px;
+  background: var(--panel-bg);
+  color: var(--text-dim); line-height: 1;
+}
+
+/* 当前页：左侧面板切到形状库时也能看到自己在改哪一页（点一下切回页面树） */
+.status-page { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.status-page:hover, .status-page:hover b { color: var(--accent); }
+.status-page b { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== P2：排列菜单 / 形状库 / 图层 ===== */
+.menu-item { position: relative; }
+.menu-drop {
+  position: absolute; top: calc(100% + 2px); left: 0; min-width: 190px;
+  background: #fff; border: 1px solid var(--chrome-border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15,23,42,.14); padding: 5px; z-index: 200;
+}
+.menu-entry { display: flex; justify-content: space-between; gap: 18px; padding: 6px 10px; border-radius: 5px; cursor: default; white-space: nowrap; }
+.menu-entry:hover { background: var(--accent-soft); color: var(--accent); }
+.menu-key { color: var(--text-dim); font-size: 11px; }
+.menu-sep { height: 1px; background: var(--chrome-border); margin: 5px 4px; }
+.menu-label { color: var(--text-dim); font-size: 11px; padding: 4px 10px 2px; }
+
+#stencil-panel { overflow-x: hidden; }
+
+/* 页面设置：尺寸 / 背景色摘要 */
+.pp-summary {
+  margin-top: 8px; padding: 6px 8px;
+  border: 1px dashed var(--chrome-border); border-radius: 6px;
+  color: var(--text-dim); font-size: 11px; text-align: center;
+}
+
+.btn-full { width: calc(100% - 8px); margin: 8px 4px; padding: 6px; border: 1px dashed var(--chrome-border); border-radius: 6px; background: #fff; color: var(--text-dim); cursor: pointer; }
+.btn-full:hover { color: var(--accent); border-color: var(--accent); }
+
+.layer-row { display: flex; align-items: center; gap: 6px; padding: 6px 6px; border-radius: 6px; cursor: default; }
+.layer-row:hover { background: var(--hover); }
+.layer-row.active { background: var(--accent-soft); }
+.layer-row .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-ico { width: 20px; height: 20px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; color: var(--text-dim); font-size: 12px; }
+.layer-ico:hover { background: rgba(0,0,0,.08); color: var(--text); }
+.layer-ico.off { opacity: .35; }
+
+/* ---------- P4：交互面板 / 预览 ---------- */
+.ip-sec { display: flex; align-items: center; gap: 6px; margin: 12px 2px 4px; font-weight: 600; font-size: 12px; color: var(--text-dim); }
+.ip-row { display: flex; align-items: center; gap: 5px; margin: 4px 0; flex-wrap: wrap; }
+.ip-col { display: flex; flex-direction: column; gap: 4px; }
+.ip-card { border: 1px solid var(--chrome-border); border-radius: 6px; padding: 6px; margin: 4px 0; background: #fbfcfd; }
+.ip-input, .ip-sel {
+  border: 1px solid var(--chrome-border); border-radius: 4px; padding: 3px 6px;
+  font-size: 12px; background: #fff; color: var(--text); min-width: 0; flex: 1;
+}
+.ip-input:focus, .ip-sel:focus { outline: none; border-color: var(--accent); }
+.ip-btn {
+  border: 1px solid var(--chrome-border); background: #fff; color: var(--text-dim);
+  border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+.ip-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ip-muted { color: var(--text-dim); font-size: 11px; }
+
+#preview-root {
+  position: fixed; inset: 0; z-index: 900;
+  background: #2b2f36; display: flex; flex-direction: column;
+}
+#preview-bar {
+  height: 34px; flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; background: #22262c; color: #e8eaee; font-size: 12px;
+  border-bottom: 1px solid #14171b;
+}
+.preview-dot { width: 8px; height: 8px; border-radius: 50%; background: #35c26a; }
+#preview-hint { margin-left: auto; color: #9aa3af; }
+#preview-stage {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto;
+}
+#preview-canvas { display: block; box-shadow: 0 10px 40px rgba(0,0,0,.35); background: #fff; }
+
+/* ===== 样式属性页：填充 / 边框 ===== */
+.sp-head { font-weight: 600; padding: 4px 2px 6px; }
+.sp-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.sp-label { color: var(--text-dim); width: 56px; flex: none; }
+.sp-color {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; background: #fff; border: 1px solid var(--chrome-border);
+  border-radius: 5px; cursor: pointer; font: inherit; color: var(--text); text-align: left;
+}
+.sp-color:hover { border-color: var(--accent); }
+.sp-chip {
+  width: 16px; height: 16px; flex: none; border-radius: 3px;
+  border: 1px solid rgba(0,0,0,.18); overflow: hidden; position: relative;
+  background: #fff;
+}
+.sp-chip.none::after {
+  content: ""; position: absolute; left: -25%; right: -25%; top: 50%; height: 1px;
+  background: #d64545; transform: rotate(-45deg);
+}
+.sp-chip.mixed { background: repeating-linear-gradient(45deg, #cbd2dc 0 3px, #fff 3px 6px); }
+.sp-color-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 11px; }
+.sp-num-wrap { display: flex; align-items: center; gap: 4px; flex: 1; }
+.sp-num {
+  width: 64px; padding: 4px 6px; border: 1px solid var(--chrome-border);
+  border-radius: 5px; font: inherit; color: var(--text); background: #fff; user-select: text;
+}
+.sp-num:focus { outline: none; border-color: var(--accent); }
+.sp-unit { color: var(--text-dim); }
+/* 线型分段按钮（直线 / 折线 / 曲线） */
+.sp-seg {
+  display: flex; flex: 1; min-width: 0; overflow: hidden;
+  border: 1px solid var(--chrome-border); border-radius: 5px; background: #fff;
+}
+.sp-seg-btn {
+  flex: 1; min-width: 0; padding: 4px 0; border: 0; border-left: 1px solid var(--chrome-border);
+  background: #fff; color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer;
+}
+.sp-seg-btn:first-child { border-left: 0; }
+.sp-seg-btn:hover { color: var(--accent); }
+.sp-seg-btn.active { background: var(--accent); color: #fff; }
+/* 箭头形状下拉 */
+.sp-select {
+  flex: 1; min-width: 0; padding: 4px 6px; background: #fff; color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: 5px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.sp-select:focus { outline: none; border-color: var(--accent); }
+.sp-select-size { flex: 0 0 62px; }
+/* 文本输入（动态面板名称等）：全局 user-select:none 下仍要能选中文字 */
+.sp-text {
+  flex: 1; min-width: 0; padding: 4px 6px; background: #fff; color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: 5px; font: inherit; font-size: 12px;
+  user-select: text; cursor: text;
+}
+.sp-text:focus { outline: none; border-color: var(--accent); }
+
+/* ===== Office 风格调色板 ===== */
+.cp-pop {
+  position: fixed; z-index: 1000; width: 272px; padding: 8px;
+  background: #fff; border: 1px solid var(--chrome-border); border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.18);
+}
+.cp-caption { font-weight: 600; margin: 0 2px 6px; }
+.cp-title { font-size: 11px; color: var(--text-dim); margin: 8px 2px 4px; }
+.cp-grid, .cp-row { display: grid; gap: 3px; }
+.cp-swatch {
+  width: 100%; aspect-ratio: 1 / 1; min-height: 18px; padding: 0;
+  border: 1px solid rgba(0,0,0,.12); border-radius: 3px; cursor: pointer;
+}
+.cp-swatch:hover, .cp-swatch.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cp-swatch-empty { border-color: transparent; background: transparent; cursor: default; }
+.cp-swatch-empty:hover { outline: none; }
+.cp-hint { color: var(--text-dim); font-size: 11px; padding: 2px 2px 4px; }
+.cp-custom { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.cp-native {
+  width: 32px; height: 24px; padding: 0; flex: none; cursor: pointer;
+  border: 1px solid var(--chrome-border); border-radius: 4px; background: #fff;
+}
+.cp-hex {
+  flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--chrome-border);
+  border-radius: 4px; font: inherit; color: var(--text); user-select: text;
+}
+.cp-hex:focus { outline: none; border-color: var(--accent); }
+.cp-apply {
+  flex: none; padding: 4px 10px; border: 1px solid var(--chrome-border); border-radius: 4px;
+  background: #fff; color: var(--text); font: inherit; cursor: pointer;
+}
+.cp-apply:hover { border-color: var(--accent); color: var(--accent); }
+.cp-none {
+  width: 100%; margin-top: 8px; padding: 5px; border: 1px dashed var(--chrome-border);
+  border-radius: 5px; background: #fff; color: var(--text-dim); font: inherit; cursor: pointer;
+}
+.cp-none:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+<style>
+html, body { margin: 0; height: 100%; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+/* 左侧页面树 + 右侧舞台：与编辑器「页面面板 + 画布」同一种布局 */
+#vx-app { display: flex; height: 100%; background: #e9ebee; }
+#vx-side { flex: 0 0 200px; display: flex; flex-direction: column; min-height: 0;
+  background: #fff; border-right: 1px solid #dfe3e8; overflow: hidden; transition: flex-basis .14s ease; }
+#vx-app.side-collapsed #vx-side { flex-basis: 34px; }
+#vx-side-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; height: 33px;
+  padding: 0 6px 0 10px; border-bottom: 1px solid #eceff3; font-size: 12px; color: #5b6472; }
+#vx-side-title { flex: 1 1 auto; font-weight: 600; white-space: nowrap; overflow: hidden; }
+#vx-app.side-collapsed #vx-side-head { padding: 0; justify-content: center; }
+#vx-app.side-collapsed #vx-side-title { display: none; }
+#vx-side-toggle { flex: none; width: 22px; height: 22px; display: flex; align-items: center;
+  justify-content: center; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: #8b93a1; cursor: pointer; }
+#vx-side-toggle:hover { background: #f0f2f5; color: #2f6fed; }
+#vx-side-toggle svg { transition: transform .14s ease; }
+#vx-app.side-collapsed #vx-side-toggle svg { transform: rotate(180deg); }
+#vx-pages { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; }
+#vx-app.side-collapsed #vx-pages { display: none; }
+.vx-page { display: flex; align-items: center; gap: 7px; width: 100%; box-sizing: border-box;
+  border: 0; border-radius: 5px; background: transparent; color: #3c4657; font: inherit;
+  font-size: 12px; text-align: left; padding: 5px 7px; cursor: pointer; }
+.vx-page:hover { background: #f4f6f9; }
+.vx-page.active { background: #e3ecff; color: #2f6fed; font-weight: 600; }
+.vx-page-ico { flex: none; width: 10px; height: 12px; border: 1.5px solid currentColor;
+  border-radius: 2px; opacity: .55; }
+.vx-page.active .vx-page-ico { opacity: 1; }
+.vx-page-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#vx-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+#vx-bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #fff;
+  border-bottom: 1px solid #dfe3e8; font-size: 12px; color: #5b6472; flex: 0 0 auto; }
+#vx-title { font-weight: 600; color: #243044; }
+#vx-page-title { color: #243044; font-weight: 600; }
+#vx-hint { margin-left: auto; color: #8b93a1; }
+#vx-stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#vx-canvas { box-shadow: 0 6px 22px rgba(0, 0, 0, .12); background: #fff; }
+</style>
+</head>
+<body>
+<div id="vx-app">
+  <aside id="vx-side">
+    <div id="vx-side-head">
+      <span id="vx-side-title">页面</span>
+      <button id="vx-side-toggle" type="button" title="折叠 / 展开页面树" aria-label="折叠或展开页面树">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div id="vx-pages"></div>
+  </aside>
+  <div id="vx-main">
+    <div id="vx-bar">
+      <span id="vx-title"></span>
+      <span id="vx-page-title"></span>
+      <span id="vx-hint">导出的原型 · 可直接点击交互</span>
+    </div>
+    <div id="vx-stage"><canvas id="vx-canvas"></canvas></div>
+  </div>
+</div>
+<script type="application/json" id="vx-doc">{"format":"visioxure","version":1,"doc":{"theme":"light","variables":[]},"assets":[],"library":[],"pages":[{"id":"p1","name":"页面-1","size":{"mode":"fixed","w":800,"h":1100,"orientation":"portrait"},"background":"#FFFFFF","grid":"small","guides":[],"variables":[],"layers":[{"id":"l1","name":"默认","visible":true,"locked":false}],"shapes":[{"id":"s1","type":"panel","x":200,"y":130,"w":394,"h":241,"angle":0,"z":1,"layer":"l1","lock":false,"text":"","style":{"fill":"transparent","line":"transparent","lineWidth":0,"cornerRadius":0,"opacity":1,"font":{"family":"Segoe UI","size":14,"color":"#4A5462","bold":false,"align":"center","vAlign":"middle"}},"panel":{"states":[{"id":"st1","name":"状态 1","shapes":[{"id":"s9","type":"group","x":230,"y":150,"w":260,"h":156,"angle":0,"z":1,"layer":"l1","lock":false,"text":"","style":{"fill":"transparent","line":"#39434F","lineWidth":1.4,"cornerRadius":4,"opacity":1,"font":{"family":"Segoe UI","size":14,"color":"#4A5462","bold":false,"align":"center","vAlign":"middle"}},"children":[{"type":"rect","x":230,"y":150,"w":260,"h":156,"style":{"fill":"#2B2A4C","line":"transparent","lineWidth":0,"cornerRadius":12,"font":{}},"id":"s2"},{"type":"text","x":248,"y":168,"w":180,"h":22,"text":"深色卡片","style":{"fill":"transparent","line":"transparent","lineWidth":0,"font":{"family":"Segoe UI","size":15,"color":"#FFFFFF","bold":true,"align":"left","vAlign":"middle"}},"id":"s3"},{"type":"rect","x":248,"y":200,"w":150,"h":10,"style":{"fill":"#4B4A72","line":"transparent","lineWidth":0,"cornerRadius":5,"font":{}},"id":"s4"},{"type":"rect","x":248,"y":218,"w":148,"h":10,"style":{"fill":"#4B4A72","line":"transparent","lineWidth":0,"cornerRadius":5,"font":{}},"id":"s5"},{"type":"rect","x":430,"y":194,"w":42,"h":42,"style":{"fill":"#3F3E64","line":"transparent","lineWidth":0,"cornerRadius":8,"font":{}},"id":"s6"},{"type":"rect","x":248,"y":256,"w":96,"h":32,"style":{"fill":"#FFFFFF","line":"transparent","lineWidth":0,"cornerRadius":7,"font":{}},"id":"s7"},{"type":"text","x":248,"y":256,"w":96,"h":32,"text":"查看详情","style":{"fill":"transparent","line":"transparent","lineWidth":0,"font":{"family":"Segoe UI","size":12,"color":"#2B2A4C","bold":true,"align":"center","vAlign":"middle"}},"id":"s8"}],"interactions":[],"meta":{"notes":"","links":[],"scripts":[]}}]},{"id":"stmw7fj3tw2","name":"状态 2","shapes":[{"id":"s13","type":"group","x":220,"y":180,"w":180,"h":70,"angle":0,"z":1,"layer":"l1","lock":false,"text":"","style":{"fill":"transparent","line":"#39434F","lineWidth":1.4,"cornerRadius":4,"opacity":1,"font":{"family":"Segoe UI","size":14,"color":"#4A5462","bold":false,"align":"center","vAlign":"middle"}},"children":[{"type":"text","x":220,"y":180,"w":180,"h":20,"text":"指标名称","style":{"fill":"transparent","line":"transparent","lineWidth":0,"font":{"family":"Segoe UI","size":12,"color":"#6E737D","bold":false,"align":"left","vAlign":"middle"}},"id":"s10"},{"type":"text","x":220,"y":202,"w":180,"h":36,"text":"42:00","style":{"fill":"transparent","line":"transparent","lineWidth":0,"font":{"family":"Segoe UI","size":20,"color":"#22252B","bold":true,"align":"left","vAlign":"middle"}},"id":"s11"},{"type":"rect","x":220,"y":242,"w":120,"h":8,"style":{"fill":"#E7E9EE","line":"transparent","lineWidth":0,"cornerRadius":4,"font":{}},"id":"s12"}],"interactions":[],"meta":{"notes":"","links":[],"scripts":[]}}]}],"active":"stmw7fj3tw2","clip":false},"interactions":[],"meta":{"notes":"","links":[],"scripts":[]},"name":"动态面板 1"},{"id":"s14","type":"rect","x":200,"y":410,"w":120,"h":40,"angle":0,"z":2,"layer":"l1","lock":false,"text":"次按钮","style":{"fill":"#FFFFFF","line":"#D5D9E1","lineWidth":1,"cornerRadius":8,"opacity":1,"font":{"family":"Segoe UI","size":14,"color":"#22252B","bold":false,"align":"center","vAlign":"middle"}},"interactions":[{"event":"click","actions":[{"type":"setState","target":"s1","state":"stmw7fj3tw2"}]}],"meta":{"notes":"","links":[],"scripts":[]}},{"id":"s15","type":"rect","x":350,"y":410,"w":120,"h":40,"angle":0,"z":3,"layer":"l1","lock":false,"text":"按钮","style":{"fill":"#2B2A4C","line":"transparent","lineWidth":0,"cornerRadius":8,"opacity":1,"font":{"family":"Segoe UI","size":14,"color":"#FFFFFF","bold":false,"align":"center","vAlign":"middle"}},"interactions":[{"event":"click","actions":[{"type":"setState","target":"s1","state":"st1"}]}],"meta":{"notes":"","links":[],"scripts":[]}}]}]}</script>
+<script>
+// model.js —— 文档模型
+// 结构对齐 CODEPLAN.md §3 JSON Schema；形状、页面、交互、动态面板状态等字段都在此定义与归一化
+"use strict";
+
+window.VX = window.VX || {};
+
+(function () {
+  let nextShapeId = 1;
+  let nextPageId = 1;
+
+  const listeners = {}; // event -> [fn]
+  function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
+  function emit(evt, data) { (listeners[evt] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } }); }
+
+  const state = {
+    selection: [],      // 选中的 shape id 列表
+    selGuides: [],      // 选中的参考线（当前页内索引）
+    tool: "select",
+    zoom: 1,
+    ox: 40, oy: 40,     // 世界原点的屏幕偏移（平移）
+    grid: true,
+    gridSize: 10,
+    gridKind: "small",  // 网格绘制样式：small / large / dots / none（跟着页面设置走）
+    mouse: { x: 0, y: 0 },   // 画布内屏幕坐标
+    marquee: null,      // 框选矩形（世界坐标）
+    alignLines: [],     // 吸附对齐线（世界坐标，瞬态）
+    spaceDown: false,
+    dirty: true,
+    currentLayer: "l1", // 当前层：新形状归入
+    enterGroup: null,   // 双击进入组合编辑时的组 id
+    panelEdit: null,    // {panelId, stateId} 进入动态面板状态编辑
+    rubberConn: null,   // 连接线拖拽预览 {begin:{x,y}, cur:{x,y}}（世界坐标，瞬态）
+    hoverShapeId: null, // 鼠标悬停的形状 id（用于显示连接点，瞬态）
+    hoverAnchor: null,  // 连接点吸附高亮 {id, index}（瞬态）
+    hoverConnEnd: null, // 连接线端点悬停 {id, which:'begin'|'end'}（瞬态）
+    connEndDrag: false, // 正在拖拽连接线端点（用于显示全部连接点）
+  };
+
+  const doc = {
+    format: "visioxure",
+    version: 1,
+    doc: { theme: "light", variables: [] },
+    assets: [],    // 图片资产：{ id, name, mime, ext, w, h, hash, dataUrl }
+    library: [],   // 组件库母版：{ id, name, w, h, shapes: [] }
+    pages: [],
+  };
+
+  let currentPageId = null;
+
+  // 页面纸张的默认背景色：新建页面、新建文档、旧文件与未声明底色的 VSDX 都回退到它
+  const DEFAULT_PAGE_BG = "#FFFFFF";
+
+  // 页面网格样式：小网格（10px 细线）/ 大网格（10px 细线 + 每 50px 主线）/ 网点 / 无。
+  // 只影响编辑器里的绘制与吸附，不进任何导出产物
+  const GRID_KINDS = ["small", "large", "dots", "none"];
+
+  // 当前页的网格样式落到编辑器状态：state.grid 仍是「显示 + 吸附」总开关（tools.js 靠它判断）
+  function applyPageGrid(p) {
+    const kind = p && GRID_KINDS.indexOf(p.grid) >= 0 ? p.grid : "small";
+    state.gridKind = kind;
+    state.grid = kind !== "none";
+  }
+
+  function makePage(name) {
+    return {
+      id: "p" + nextPageId++,
+      name: name || ("页面-" + nextPageId),
+      size: { mode: "fixed", w: 800, h: 1100, orientation: "portrait" },
+      background: DEFAULT_PAGE_BG,  // 页面背景色
+      grid: "small",        // 网格样式（页面设置里改）
+      guides: [],           // {dir:'v'|'h', pos} 世界坐标
+      variables: [],
+      layers: [{ id: "l1", name: "默认", visible: true, locked: false }],
+      shapes: [],
+    };
+  }
+
+  function defaultStyle(type) {
+    if (type === "text") {
+      return { fill: "transparent", line: "transparent", lineWidth: 0, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "left", vAlign: "top" } };
+    }
+    if (type === "path") {
+      return { fill: "#7B68EE", line: "#5646B0", lineWidth: 1.5, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#FFFFFF", bold: false, align: "center", vAlign: "middle" } };
+    }
+    if (type === "connector") {
+      return { line: "#37474F", lineWidth: 1.5, arrowEnd: true, arrowBegin: false,
+               arrowEndKind: "arrow", arrowBeginKind: "none",
+               arrowEndType: 4, arrowBeginType: 0, arrowEndSize: 2, arrowBeginSize: 2, opacity: 1,
+               font: { family: "Segoe UI", size: 12, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
+    }
+    if (type === "panel") {
+      // 动态面板是透明容器，边框只在编辑器里以虚线示意
+      return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
+    }
+    if (type === "repeater") {
+      // 中继器是透明容器：内容由数据集 + 模板重复渲染，边框只在编辑器里示意
+      return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "left", vAlign: "top" } };
+    }
+    if (type === "instance") {
+      return null;   // 组件实例的样式由快照子形状各自持有
+    }
+    if (type === "image") {
+      // 图片默认无填充/无边框，内容由 assetId 决定；边框仍可在样式面板打开
+      return { fill: "transparent", line: "transparent", lineWidth: 1, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "center", vAlign: "middle" } };
+    }
+    if (type === "ellipse") {
+      return { fill: "#5BA85B", line: "#3D7A3D", lineWidth: 1.5, cornerRadius: 0, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#FFFFFF", bold: false, align: "center", vAlign: "middle" } };
+    }
+    return { fill: "#4A90D9", line: "#2B6CB0", lineWidth: 1.5, cornerRadius: 4, opacity: 1,
+             font: { family: "Segoe UI", size: 14, color: "#FFFFFF", bold: false, align: "center", vAlign: "middle" } };
+  }
+
+  // path 的 subpaths 是「设计尺寸」下的局部坐标；创建/载入时把当时的包围盒固化为 design，
+  // 之后改 w/h 就是相对 design 缩放图形（见 Geometry.pathScale）。
+  // 必须在数据进入模型时物化：留到绘制时才取默认值的话，默认值会跟着新 w/h 一起变，缩放永远是 1
+  function ensurePathDesign(s) {
+    if (s && s.type === "path" && s.path && !s.path.design) s.path.design = { w: s.w, h: s.h };
+  }
+
+  // ---- 动态面板：数据契约与树操作 ----
+  // shape.name = 面板名（状态编辑页签标题）；panel = { states, active, clip }
+  // 状态里的子形状用世界坐标，面板本身是「视口」：移动时整体平移，改尺寸只改视口。
+  function defaultPanel() {
+    return { states: [{ id: "st1", name: "状态 1", shapes: [] }], active: "st1", clip: true };
+  }
+
+  // 新建面板的显示名：按文档里已用过的名字递增，避免「动态面板 1」重名
+  function nextPanelName() {
+    const used = new Set();
+    const walk = (arr) => {
+      for (const s of arr || []) {
+        if (s.type === "panel" && s.name) used.add(s.name);
+        walk(s.children);
+        for (const st of (s.panel && s.panel.states) || []) walk(st.shapes);
+        for (const t of (s.repeater && s.repeater.template) || []) walk(t);
+      }
+    };
+    for (const p of doc.pages || []) walk(p.shapes);
+    let n = 1;
+    while (used.has("动态面板 " + n)) n++;
+    return "动态面板 " + n;
+  }
+
+  // 所有入口（新建 / 载入 / VSDX 读回）都过这一层：旧文件可能缺 states、active、
+  // 状态 id、shapes，甚至还是 P4 之前的 {action,targets} 旧 schema。
+  // defaultClip=false 用于「载入旧文档」：旧文件本来不裁剪，强行开启会让坐标漂移到
+  // 视口外的内容（历史版本移动面板不带动子形状留下的）突然全部消失。
+  function normalizePanel(s, defaultClip) {
+    if (!s || s.type !== "panel") return;
+    // 先记下原文件是否显式声明过 clip：整段重建（旧 schema）时 defaultPanel 的 true 不能盖过它
+    const raw = s.panel;
+    const declaredClip = raw && typeof raw === "object" && !Array.isArray(raw) && typeof raw.clip === "boolean"
+      ? raw.clip : null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.states)) {
+      s.panel = defaultPanel();
+    }
+    const p = s.panel;
+    p.states = p.states.filter((st) => st && typeof st === "object");
+    if (!p.states.length) p.states = [{ id: "st1", name: "状态 1", shapes: [] }];
+    const used = new Set();
+    p.states.forEach((st, i) => {
+      if (!st.id || used.has(st.id)) {
+        let id = "st" + (i + 1) + "_" + i;
+        let n = 1;
+        while (used.has(id)) id = "st" + (i + 1) + "_" + (n++);
+        st.id = id;
+      }
+      used.add(st.id);
+      if (!st.name) st.name = "状态 " + (i + 1);
+      if (!Array.isArray(st.shapes)) st.shapes = [];
+    });
+    if (!p.states.some((st) => st.id === p.active)) p.active = p.states[0].id;
+    p.clip = declaredClip === null ? (defaultClip !== false) : declaredClip;
+    if (!s.name) s.name = nextPanelName();
+  }
+
+  // 平移整棵子树：容器子形状（含连接线端点/折点、嵌套面板、中继器模板）都要跟着走
+  function translateShapeTree(s, dx, dy) {
+    if (!s) return;
+    s.x = (s.x || 0) + dx;
+    s.y = (s.y || 0) + dy;
+    if (s.type === "connector") {
+      for (const k of ["begin", "end"]) if (s[k]) { s[k].x += dx; s[k].y += dy; }
+      for (const p of s.points || []) { p.x += dx; p.y += dy; }
+    }
+    for (const ch of s.children || []) translateShapeTree(ch, dx, dy);
+    for (const st of (s.panel && s.panel.states) || []) for (const ch of st.shapes || []) translateShapeTree(ch, dx, dy);
+    for (const t of (s.repeater && s.repeater.template) || []) translateShapeTree(t, dx, dy);
+  }
+
+  const Model = {
+    doc,
+    state,
+    on,
+    emit,
+    defaultStyleFor: defaultStyle, // 供形状库合并模板差异样式
+    DEFAULT_PAGE_BG,               // 页面纸张默认背景色（新建文档/新页面共用同一个值）
+
+    init() {
+      const p = makePage("页面-1");
+      doc.pages.push(p);
+      currentPageId = p.id;
+      applyPageGrid(p);
+      state.dirty = true;
+    },
+
+    // ---- 页面 ----
+    page(id) { return doc.pages.find((p) => p.id === (id || currentPageId)); },
+    currentPageId() { return currentPageId; },
+    setCurrentPage(id) {
+      if (doc.pages.some((p) => p.id === id)) {
+        currentPageId = id;
+        applyPageGrid(this.page(id));   // 网格样式是每页的设置
+        state.selection = [];
+        state.selGuides = [];
+        state.panelEdit = null;  // 状态编辑上下文属于某一页，换页后必须失效
+        state.enterGroup = null;
+        state.dirty = true;
+        emit("pagechange");
+      }
+    },
+    addPage() {
+      const p = makePage("页面-" + (doc.pages.length + 1));
+      doc.pages.push(p);
+      currentPageId = p.id;
+      applyPageGrid(p);
+      state.selection = [];
+      state.selGuides = [];
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+      return p;
+    },
+    renamePage(id, name) {
+      const p = this.page(id);
+      if (p && name) { p.name = name; state.dirty = true; emit("pagechange"); emit("change"); }
+    },
+    deletePage(id) {
+      if (doc.pages.length <= 1) return false;
+      const i = doc.pages.findIndex((p) => p.id === id);
+      if (i < 0) return false;
+      doc.pages.splice(i, 1);
+      if (currentPageId === id) {
+        currentPageId = doc.pages[Math.min(i, doc.pages.length - 1)].id;
+        applyPageGrid(this.page(currentPageId));
+        state.selection = [];
+        state.selGuides = [];
+      }
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+      return true;
+    },
+    // 把页面直接挪到指定下标（拖拽排序用）；下标先夹到合法范围，原地不动则返回 false
+    movePageTo(id, index) {
+      const i = doc.pages.findIndex((p) => p.id === id);
+      if (i < 0) return false;
+      const j = Math.max(0, Math.min(doc.pages.length - 1, Math.floor(index)));
+      if (j === i) return false;
+      const [p] = doc.pages.splice(i, 1);
+      doc.pages.splice(j, 0, p);
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+      return true;
+    },
+    movePage(id, delta) {
+      const i = doc.pages.findIndex((p) => p.id === id);
+      if (i < 0) return false;
+      return this.movePageTo(id, i + delta);
+    },
+    // 页面网格样式：small / large / dots / none（非法值回退小网格）
+    setPageGrid(kind) {
+      const p = this.page();
+      if (!p) return;
+      p.grid = GRID_KINDS.indexOf(kind) >= 0 ? kind : "small";
+      applyPageGrid(p);
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+    },
+    // 页面尺寸（px）：宽/高写入 size，横竖方向随之推导
+    setPageSize(w, h) {
+      const p = this.page();
+      if (!p) return;
+      if (!p.size) p.size = { mode: "fixed", w: 800, h: 1100 };
+      if (typeof w === "number" && isFinite(w) && w > 0) p.size.w = w;
+      if (typeof h === "number" && isFinite(h) && h > 0) p.size.h = h;
+      p.size.orientation = p.size.w > p.size.h ? "landscape" : "portrait";
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+    },
+    // 页面背景色：留空回落到白色
+    setPageBackground(color) {
+      const p = this.page();
+      if (!p) return;
+      p.background = color || "#FFFFFF";
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+    },
+
+    // ---- 形状 ----
+    shapes() { return this.page().shapes; },
+    shape(id) {
+      const find = (arr) => {
+        for (const s of arr || []) {
+          if (s.id === id) return s;
+          if (s.type === "group" || s.type === "instance") { const f = find(s.children); if (f) return f; }
+          if (s.type === "panel") {
+            for (const st of (s.panel && s.panel.states) || []) {
+              const f = find(st.shapes);
+              if (f) return f;
+            }
+          }
+        }
+        return null;
+      };
+      return find(this.page().shapes);
+    },
+    maxZ() {
+      const mx = (arr) => (arr || []).reduce((m, s) => Math.max(m, s.z || 0), 0);
+      let m = mx(this.page().shapes);
+      const pe = state.panelEdit;
+      if (pe) {
+        const p = this.shape(pe.panelId);
+        const st = p && this.panelStateById(p, pe.stateId);
+        if (st) m = mx(st.shapes);
+      }
+      return m;
+    },
+
+    // ---- 动态面板 ----
+    normalizePanel,
+    panelStates(s) { return (s && s.type === "panel" && s.panel && Array.isArray(s.panel.states)) ? s.panel.states : []; },
+    panelStateById(panel, id) { return this.panelStates(panel).find((x) => x.id === id) || null; },
+    panelState(panel) {
+      const st = this.panelStates(panel);
+      if (!st.length) return null;
+      const hit = st.find((x) => x.id === (panel.panel && panel.panel.active));
+      return hit || st[0];
+    },
+    activePanelShapes(panel) {
+      const st = this.panelState(panel);
+      if (!st) return [];
+      if (!Array.isArray(st.shapes)) st.shapes = [];
+      return st.shapes;
+    },
+    // 缺省裁剪（视口语义）；显式 clip:false 才让内容溢出显示
+    panelClip(s) { return !!(s && s.type === "panel" && (!s.panel || s.panel.clip !== false)); },
+    // 状态编辑页签标题：面板名（旧文件没有 name 时用 id 兜底）
+    panelName(s) { return (s && (s.name || (s.type === "panel" ? "动态面板 " + s.id : s.id))) || "动态面板"; },
+    addPanelState(panel, name, copyFromId) {
+      normalizePanel(panel);
+      const p = panel.panel;
+      const src = copyFromId ? this.panelStateById(panel, copyFromId) : null;
+      let shapes = [];
+      if (src) {
+        shapes = JSON.parse(JSON.stringify(src.shapes || []));
+        const reid = (x) => {
+          x.id = this.nextId();
+          for (const c of x.children || []) reid(c);
+          for (const st of (x.panel && x.panel.states) || []) for (const c of st.shapes || []) reid(c);
+          for (const t of (x.repeater && x.repeater.template) || []) reid(t);
+        };
+        shapes.forEach(reid);
+      }
+      const st = { id: "st" + Date.now().toString(36) + "_" + (p.states.length + 1),
+                   name: name || ("状态 " + (p.states.length + 1)), shapes };
+      p.states.push(st);
+      p.active = st.id;
+      state.dirty = true;
+      emit("change");
+      return st;
+    },
+    removePanelState(panel, id) {
+      normalizePanel(panel);
+      const p = panel.panel;
+      if (p.states.length <= 1) return false;   // 至少保留一个状态
+      const i = p.states.findIndex((x) => x.id === id);
+      if (i < 0) return false;
+      p.states.splice(i, 1);
+      if (p.active === id) p.active = p.states[Math.min(i, p.states.length - 1)].id;
+      const pe = state.panelEdit;
+      if (pe && pe.panelId === panel.id && pe.stateId === id) {
+        pe.stateId = p.active;
+        state.selection = [];
+      }
+      state.dirty = true;
+      emit("change");
+      return true;
+    },
+    // 状态排序（拖拽/上移下移）：只改顺序，不影响 active 与内容
+    movePanelState(panel, id, delta) {
+      normalizePanel(panel);
+      const arr = panel.panel.states;
+      const i = arr.findIndex((x) => x.id === id);
+      if (i < 0) return false;
+      const j = Math.max(0, Math.min(arr.length - 1, i + delta));
+      if (i === j) return false;
+      const [st] = arr.splice(i, 1);
+      arr.splice(j, 0, st);
+      state.dirty = true;
+      emit("change");
+      return true;
+    },
+    setPanelState(panel, id) {
+      if (this.panelStateById(panel, id)) {
+        panel.panel.active = id;
+        const pe = state.panelEdit;
+        if (pe && pe.panelId === panel.id) pe.stateId = id;
+        state.dirty = true;
+        emit("change");
+      }
+    },
+    // 全部状态内容的包围盒并集（用于「适应内容尺寸」；容器子形状按自身包围盒计）
+    panelContentBounds(panel) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const add = (s) => {
+        if (s.type === "connector") {
+          for (const p of [s.begin, s.end]) {
+            if (!p) continue;
+            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+          }
+          return;
+        }
+        minX = Math.min(minX, s.x || 0); minY = Math.min(minY, s.y || 0);
+        maxX = Math.max(maxX, (s.x || 0) + (s.w || 0)); maxY = Math.max(maxY, (s.y || 0) + (s.h || 0));
+      };
+      for (const st of this.panelStates(panel)) for (const ch of st.shapes || []) add(ch);
+      return minX === Infinity ? null : { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+    },
+    // 视口对齐内容：内容保持世界坐标不动，只改面板的 x/y/w/h
+    fitPanelToContent(panel) {
+      const b = this.panelContentBounds(panel);
+      if (!b) return false;
+      panel.x = b.x; panel.y = b.y; panel.w = b.w; panel.h = b.h;
+      state.dirty = true;
+      emit("change");
+      return true;
+    },
+
+    addShape(type, props) {
+      const s = Object.assign({
+        id: this.nextId(),
+        type,
+        x: 0, y: 0, w: 120, h: 80, angle: 0,
+        z: this.maxZ() + 1,
+        layer: state.currentLayer,
+        lock: false,
+        text: type === "text" ? "文本" : "",
+        style: defaultStyle(type),
+      }, props || {});
+      ensurePathDesign(s);
+      if (type === "panel") {
+        if (!props || !props.panel) s.panel = defaultPanel();
+        normalizePanel(s);   // 形状库/外部 JSON 的 panel 也统一补齐 active/clip
+      }
+      // 面板状态编辑中：新形状归入该状态，其余归页面
+      const pe = state.panelEdit;
+      if (pe) {
+        const panel = this.shape(pe.panelId);
+        const st = panel && this.panelStateById(panel, pe.stateId);
+        if (st) {
+          if (!Array.isArray(st.shapes)) st.shapes = [];
+          st.shapes.push(s);
+          state.dirty = true;
+          return s;
+        }
+      }
+      this.page().shapes.push(s);
+      state.dirty = true;
+      return s;
+    },
+
+    // 形状 id 分配（形状库创建组合子形状时复用）
+    nextId() { return "s" + nextShapeId++; },
+
+    updateShape(id, props) {
+      const s = this.shape(id);
+      if (s) { Object.assign(s, props); state.dirty = true; }
+      return s;
+    },
+
+    // 深拷贝形状（组递归重生成 id，避免复制后 id 冲突），偏移 (+10,+10)
+    duplicateShape(id) {
+      const src = this.shape(id);
+      if (!src) return null;
+      const copy = JSON.parse(JSON.stringify(src));
+      const reid = (x) => {
+        x.id = "s" + nextShapeId++;
+        if ((x.type === "group" || x.type === "instance") && x.children) x.children.forEach(reid);
+        if (x.type === "panel") for (const st of (x.panel && x.panel.states) || []) (st.shapes || []).forEach(reid);
+        if (x.type === "repeater") for (const t of (x.repeater && x.repeater.template) || []) reid(t);
+        return x;
+      };
+      reid(copy);
+      // 容器子形状是世界坐标：副本整体偏移 (+10,+10) 时它们必须一起走
+      const shiftKids = (s) => {
+        for (const c of s.children || []) translateShapeTree(c, 10, 10);
+        for (const st of (s.panel && s.panel.states) || []) for (const c of st.shapes || []) translateShapeTree(c, 10, 10);
+      };
+      shiftKids(copy);
+      if (copy.type === "panel") copy.name = nextPanelName();
+      copy.x += 10; copy.y += 10;
+      copy.z = this.maxZ() + 1;
+      this.page().shapes.push(copy);
+      state.dirty = true;
+      return copy;
+    },
+
+    removeShapes(ids) {
+      const set = new Set(ids);
+      // 面板状态编辑中：只删除该状态内的形状
+      const pe = state.panelEdit;
+      if (pe) {
+        const panel = this.shape(pe.panelId);
+        const st = panel && this.panelStateById(panel, pe.stateId);
+        if (st) {
+          st.shapes = (st.shapes || []).filter((s) => !set.has(s.id));
+          state.selection = state.selection.filter((id) => !set.has(id));
+          state.dirty = true;
+          return;
+        }
+      }
+      const pg = this.page();
+      // 递归过滤：支持组编辑模式下删除子形状；删除后同步组包围盒
+      const filt = (arr) => {
+        const out = [];
+        for (const s of arr) {
+          if ((s.type === "group" || s.type === "instance") && s.children) s.children = filt(s.children);
+          if (!set.has(s.id)) out.push(s);
+        }
+        return out;
+      };
+      pg.shapes = filt(pg.shapes);
+      for (const s of pg.shapes) if (s.type === "group" || s.type === "instance") this.syncGroupBounds(s);
+      state.selection = state.selection.filter((id) => !set.has(id));
+      state.dirty = true;
+    },
+
+    // ---- P2：组合 / 解组 / 布尔 / 对齐 ----
+    // 平移形状：组合/实例/动态面板的子形状都是世界坐标，必须整体跟随
+    moveShapeBy(s, dx, dy) {
+      if (!s) return;
+      s.x += dx; s.y += dy;
+      if (s.type === "group" || s.type === "instance") {
+        for (const ch of s.children || []) translateShapeTree(ch, dx, dy);
+      } else if (s.type === "panel") {
+        for (const st of this.panelStates(s)) for (const ch of st.shapes || []) translateShapeTree(ch, dx, dy);
+      }
+    },
+
+    // 组包围盒 = 子形状 AABB 并集（旋转形状按其 AABB，P2 简化）
+    syncGroupBounds(g) {
+      if (!g || g.type !== "group") return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const ch of g.children || []) {
+        if (ch.type === "group") this.syncGroupBounds(ch);
+        minX = Math.min(minX, ch.x); minY = Math.min(minY, ch.y);
+        maxX = Math.max(maxX, ch.x + ch.w); maxY = Math.max(maxY, ch.y + ch.h);
+      }
+      if (minX === Infinity) return;
+      g.x = minX; g.y = minY; g.w = maxX - minX; g.h = maxY - minY;
+    },
+
+    group(ids) {
+      const shapes = (ids || state.selection).map((id) => this.shape(id)).filter(Boolean);
+      if (shapes.length < 2) return null;
+      const pg = this.page();
+      const z = Math.max(...shapes.map((s) => s.z || 0));
+      const set = new Set(shapes.map((s) => s.id));
+      const g = {
+        id: "s" + nextShapeId++,
+        type: "group",
+        x: 0, y: 0, w: 0, h: 0, angle: 0,
+        z: z,
+        layer: state.currentLayer,
+        lock: false, text: "", style: null,
+        children: shapes,
+      };
+      this.syncGroupBounds(g);
+      pg.shapes = pg.shapes.filter((s) => !set.has(s.id));
+      pg.shapes.push(g);
+      state.selection = [g.id];
+      state.enterGroup = null;
+      state.dirty = true;
+      emit("change");
+      return g;
+    },
+
+    ungroup(ids) {
+      const pg = this.page();
+      const out = [];
+      for (const id of (ids || state.selection)) {
+        const g = this.shape(id);
+        if (!g || g.type !== "group") continue;
+        // 子形状回到页面（z 保持），插入到组原来所在位置之前
+        const at = pg.shapes.indexOf(g);
+        for (const ch of (g.children || []).reverse()) {
+          pg.shapes.splice(at, 0, ch);
+        }
+        pg.shapes = pg.shapes.filter((s) => s !== g);
+        out.push(...(g.children || []).map((c) => c.id));
+      }
+      state.selection = out;
+      state.enterGroup = null;
+      state.dirty = true;
+      emit("change");
+      return out;
+    },
+
+    // 布尔运算：kind = 'union' | 'intersect' | 'subtract'
+    booleanOp(kind) {
+      const shapes = state.selection.map((id) => this.shape(id))
+        .filter(Boolean)
+        .filter((s) => ["rect", "ellipse", "path", "text"].includes(s.type))
+        .sort((a, b) => (a.z || 0) - (b.z || 0)); // z 升序：底层为 subject
+      if (shapes.length < 2) return null;
+      const props = VX.Geometry.booleanShape(kind, shapes);
+      if (!props) return null;
+      const pg = this.page();
+      const at = pg.shapes.indexOf(shapes[0]); // 结果占据最底层形状的位置
+      const ids = new Set(shapes.map((s) => s.id));
+      const s = this.addShape("path", props);
+      pg.shapes = pg.shapes.filter((x) => !ids.has(x.id));
+      pg.shapes.splice(Math.max(0, at), 0, s);
+      state.selection = [s.id];
+      state.dirty = true;
+      emit("change");
+      return s;
+    },
+
+    // 多选对齐：kind = left|hcenter|right|top|vcenter|bottom
+    align(kind) {
+      const shapes = state.selection.map((id) => this.shape(id)).filter(Boolean);
+      if (shapes.length < 2) return;
+      const minX = Math.min(...shapes.map((s) => s.x));
+      const maxX = Math.max(...shapes.map((s) => s.x + s.w));
+      const minY = Math.min(...shapes.map((s) => s.y));
+      const maxY = Math.max(...shapes.map((s) => s.y + s.h));
+      for (const s of shapes) {
+        if (kind === "left") this.moveShapeBy(s, minX - s.x, 0);
+        else if (kind === "right") this.moveShapeBy(s, maxX - (s.x + s.w), 0);
+        else if (kind === "hcenter") this.moveShapeBy(s, (minX + maxX) / 2 - (s.x + s.w / 2), 0);
+        else if (kind === "top") this.moveShapeBy(s, 0, minY - s.y);
+        else if (kind === "bottom") this.moveShapeBy(s, 0, maxY - (s.y + s.h));
+        else if (kind === "vcenter") this.moveShapeBy(s, 0, (minY + maxY) / 2 - (s.y + s.h / 2));
+      }
+      state.dirty = true;
+      emit("change");
+    },
+
+    // 均分：axis = 'h' | 'v'（按包围盒，至少 3 个）
+    distribute(axis) {
+      const shapes = state.selection.map((id) => this.shape(id)).filter(Boolean);
+      if (shapes.length < 3) return;
+      if (axis === "h") {
+        shapes.sort((a, b) => a.x - b.x);
+        const total = (shapes[shapes.length - 1].x) - shapes[0].x;
+        const sumW = shapes.reduce((m, s) => m + s.w, 0);
+        const gap = (total - sumW) / (shapes.length - 1);
+        let cur = shapes[0].x;
+        for (const s of shapes) { this.moveShapeBy(s, cur - s.x, 0); cur += s.w + gap; }
+      } else {
+        shapes.sort((a, b) => a.y - b.y);
+        const total = (shapes[shapes.length - 1].y) - shapes[0].y;
+        const sumH = shapes.reduce((m, s) => m + s.h, 0);
+        const gap = (total - sumH) / (shapes.length - 1);
+        let cur = shapes[0].y;
+        for (const s of shapes) { this.moveShapeBy(s, 0, cur - s.y); cur += s.h + gap; }
+      }
+      state.dirty = true;
+      emit("change");
+    },
+
+    // ---- P2：图层 ----
+    layers() { return this.page().layers; },
+    addLayer(name) {
+      const ls = this.page().layers;
+      const l = { id: "l" + (ls.length + 1) + "_" + Date.now().toString(36), name: name || ("图层-" + (ls.length + 1)), visible: true, locked: false };
+      ls.push(l);
+      state.dirty = true;
+      emit("change");
+      return l;
+    },
+    setCurrentLayer(id) { state.currentLayer = id; emit("layers"); },
+    toggleLayer(id, key) {
+      const l = this.page().layers.find((x) => x.id === id);
+      if (l) { l[key] = !l[key]; state.dirty = true; emit("change"); }
+    },
+
+    // ---- 序列化 ----
+    serialize() { return JSON.stringify(doc); },
+    load(json) {
+      const d = JSON.parse(json);
+      if (d.format !== "visioxure") throw new Error("bad format");
+      doc.pages = d.pages;
+      doc.doc = d.doc || doc.doc;
+      // 图片资产与组件库（P6.5）：缺失时补空数组，旧文件不受影响
+      doc.assets = Array.isArray(d.assets) ? d.assets : [];
+      doc.library = Array.isArray(d.library) ? d.library : [];
+      // 重置 id 计数避免冲突（含组合/面板/实例/中继器模板子形状）
+      nextShapeId = 1; nextPageId = 1;
+      const panelStateIds = new Map();     // panelId -> { ids, first }
+      const stateActions = [];             // 旧文件里需要迁移的 setState 动作
+      const scan = (arr) => {
+        for (const s of arr || []) {
+          ensurePathDesign(s);   // 旧文件与导入的 vsdx 没有 design，按当前包围盒固化
+          const sid = parseInt(String(s.id).slice(1), 10) || 1;
+          nextShapeId = Math.max(nextShapeId, sid + 1);
+          for (const it of s.interactions || []) {
+            for (const a of (it && it.actions) || []) if (a && a.type === "setState") stateActions.push(a);
+          }
+          if (s.type === "group") scan(s.children);
+          if (s.type === "panel") {
+            normalizePanel(s, false);   // 旧文件保持「不裁剪」，避免历史内容突然不可见
+            panelStateIds.set(s.id, {
+              ids: new Set(s.panel.states.map((x) => x.id)),
+              first: s.panel.states[0].id,
+            });
+            for (const st of s.panel.states) scan(st.shapes);
+          }
+          if (s.type === "instance") scan(s.children);
+          // 中继器模板是一组形状（重复渲染时按行插值），模板 id 也要计入
+          if (s.type === "repeater" && s.repeater) scan(s.repeater.template);
+        }
+      };
+      doc.pages.forEach((p) => {
+        // 页面缺底色（旧文件 / 手写 JSON / 未声明 FillForegnd 的导入件）时回退白纸
+        if (!p.background) p.background = DEFAULT_PAGE_BG;
+        // 旧文件没有网格样式，统一补小网格
+        if (GRID_KINDS.indexOf(p.grid) < 0) p.grid = "small";
+        const pid = parseInt(String(p.id).slice(1), 10) || 1;
+        nextPageId = Math.max(nextPageId, pid + 1);
+        scan(p.shapes);
+      });
+      // 旧版「切换面板状态」下拉在没手动改过时只显示第一态、却不写入 state，文档里存成 ""。
+      // 旧运行时把它当成「回到默认态」，于是按钮点了看不出变化。载入时物化成明确的状态 id，
+      // 顺便把指向已删除状态的动作修正到第一态（next/prev/cycle 是合法的特殊值，保留）。
+      for (const a of stateActions) {
+        const info = panelStateIds.get(a.target);
+        if (!info) continue;
+        const key = String(a.state == null ? "" : a.state).trim();
+        if (key !== "next" && key !== "prev" && key !== "cycle" && (!key || !info.ids.has(key))) {
+          a.state = info.first;
+        }
+      }
+      currentPageId = doc.pages[0] ? doc.pages[0].id : null;
+      applyPageGrid(doc.pages[0]);
+      state.selection = [];
+      state.selGuides = [];
+      state.panelEdit = null;   // 载入新文档后旧的状态编辑上下文必须失效
+      state.hoverShapeId = null;
+      state.hoverAnchor = null;
+      state.hoverConnEnd = null;
+      state.connEndDrag = false;
+      state.dirty = true;
+      emit("pagechange");
+      emit("change");
+    },
+  };
+
+  VX.Model = Model;
+  VX.state = state;
+  VX.Events = { on, emit };
+})();
+
+</script>
+<script>
+// geometry.js —— 形状多边形化 + Clipper 布尔运算（联合/相交/剪除）（P2）
+// 对齐 CODEPLAN.md §5：矩形/椭圆统一多边形化（椭圆 64 段）后走 Clipper；
+// 结果生成 type=path 形状（子路径为设计尺寸下的局部坐标，原点=包围盒中心），继承底层形状样式
+"use strict";
+
+(function () {
+  const SCALE = 1000;      // 浮点 → Clipper 整数坐标的放大倍数
+  const ELLIPSE_SEG = 64;  // 椭圆多边形化段数
+
+  function rot(cx, cy, a, x, y) {
+    if (!a) return { x, y };
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const dx = x - cx, dy = y - cy;
+    return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+  }
+
+  // path 几何的缩放系数：subpaths 记录的是「设计尺寸」下的局部坐标，
+  // 拖拽手柄或改宽高只动 w/h，图形必须按 w/design.w 跟着缩放，
+  // 否则菱形/三角形/梯形这类纯路径形状会出现选框变了、边框没变
+  // 缺 design（旧文件、外来 vsdx、形状库定义）时系数为 1，与改动前行为一致
+  function pathScale(s) {
+    const d = s.path && s.path.design;
+    const dw = d && d.w > 0 ? d.w : s.w;
+    const dh = d && d.h > 0 ? d.h : s.h;
+    return { kx: dw > 0 ? s.w / dw : 1, ky: dh > 0 ? s.h / dh : 1 };
+  }
+
+  // shape → 世界坐标多边形环数组；不支持布尔的类型返回 null
+  function shapeToRings(s) {
+    const cx = s.x + s.w / 2, cy = s.y + s.h / 2, a = s.angle || 0;
+    if (s.type === "rect" || s.type === "text") {
+      const hw = s.w / 2, hh = s.h / 2;
+      const pts = [{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }];
+      return [pts.map((p) => rot(cx, cy, a, cx + p.x, cy + p.y))];
+    }
+    if (s.type === "ellipse") {
+      const hw = s.w / 2, hh = s.h / 2;
+      const pts = [];
+      for (let i = 0; i < ELLIPSE_SEG; i++) {
+        const t = (i / ELLIPSE_SEG) * Math.PI * 2;
+        pts.push(rot(cx, cy, a, cx + hw * Math.cos(t), cy + hh * Math.sin(t)));
+      }
+      return [pts];
+    }
+    if (s.type === "path" && s.path && s.path.subpaths) {
+      // 局部坐标（原点=中心）→ 世界，并按包围盒相对设计尺寸缩放
+      const k = pathScale(s);
+      return s.path.subpaths.map((ring) => ring.map((p) => rot(cx, cy, a, cx + p.x * k.kx, cy + p.y * k.ky)));
+    }
+    return null; // group/connector/image 等不参与布尔
+  }
+
+  function toClip(rings) {
+    return rings.map((ring) => ring.map((p) => ({ X: Math.round(p.x * SCALE), Y: Math.round(p.y * SCALE) })));
+  }
+  function fromClip(paths) {
+    return (paths || []).map((p) => p.map((pt) => ({ x: pt.X / SCALE, y: pt.Y / SCALE })));
+  }
+
+  // kind: 'union' | 'intersect' | 'subtract'（subject = shapes[0]，调用方按 z 升序传入）
+  function booleanRings(kind, shapes) {
+    if (typeof ClipperLib === "undefined") return null;
+    const CT = ClipperLib.ClipType, PT = ClipperLib.PolyType, PFT = ClipperLib.PolyFillType;
+    try {
+      if (kind === "union") {
+        const c = new ClipperLib.Clipper();
+        for (const s of shapes) c.AddPaths(toClip(shapeToRings(s)), PT.ptSubject, true);
+        const sol = new ClipperLib.Paths();
+        c.Execute(CT.ctUnion, sol, PFT.pftNonZero, PFT.pftNonZero);
+        return fromClip(sol);
+      }
+      if (kind === "intersect") {
+        let acc = toClip(shapeToRings(shapes[0]));
+        for (let i = 1; i < shapes.length; i++) {
+          const c = new ClipperLib.Clipper();
+          c.AddPaths(acc, PT.ptSubject, true);
+          c.AddPaths(toClip(shapeToRings(shapes[i])), PT.ptClip, true);
+          const sol = new ClipperLib.Paths();
+          c.Execute(CT.ctIntersection, sol, PFT.pftNonZero, PFT.pftNonZero);
+          acc = sol;
+          if (!acc.length) break;
+        }
+        return fromClip(acc);
+      }
+      if (kind === "subtract") {
+        const c = new ClipperLib.Clipper();
+        c.AddPaths(toClip(shapeToRings(shapes[0])), PT.ptSubject, true);
+        for (let i = 1; i < shapes.length; i++) c.AddPaths(toClip(shapeToRings(shapes[i])), PT.ptClip, true);
+        const sol = new ClipperLib.Paths();
+        c.Execute(CT.ctDifference, sol, PFT.pftNonZero, PFT.pftNonZero);
+        return fromClip(sol);
+      }
+    } catch (e) {
+      console.error("boolean error:", e);
+      return null;
+    }
+    return null;
+  }
+
+  // 布尔结果 → path 形状属性（局部坐标原点=包围盒中心，angle=0）
+  function booleanShape(kind, shapes) {
+    const rings = booleanRings(kind, shapes);
+    if (!rings || !rings.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const ring of rings) {
+      for (const p of ring) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+    }
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const subpaths = rings
+      .map((ring) => ring.map((p) => ({ x: +(p.x - cx).toFixed(3), y: +(p.y - cy).toFixed(3) })))
+      .filter((ring) => ring.length >= 3);
+    if (!subpaths.length) return null;
+    const src = shapes[0]; // 继承底层（subject）样式
+    return {
+      type: "path",
+      x: minX, y: minY,
+      w: maxX - minX, h: maxY - minY,
+      style: src ? JSON.parse(JSON.stringify(src.style)) : undefined,
+      path: { subpaths, fillRule: "evenodd", design: { w: maxX - minX, h: maxY - minY } },
+    };
+  }
+
+  VX.Geometry = { shapeToRings, booleanRings, booleanShape, rot, pathScale };
+})();
+
+</script>
+<script>
+// routing.js —— 连接线布线（P2）
+// 对齐 CODEPLAN.md §5：先直线，再直角折线（含锚点面朝向的出线段），A* 避障留待后续；
+// 纯函数便于单测。连接点序号：0=上 1=右 2=下 3=左（四边中点）
+"use strict";
+
+(function () {
+  const LEAD = 16; // 锚定后从形状边缘伸出的引导段长度（世界 px）
+
+  const NORMALS = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+
+  // 形状第 n 个连接点的世界坐标（考虑旋转）
+  function anchorOf(t, n) {
+    const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
+    const pts = [
+      { x: cx, y: t.y },          // 上
+      { x: t.x + t.w, y: cy },    // 右
+      { x: cx, y: t.y + t.h },    // 下
+      { x: t.x, y: cy },          // 左
+    ];
+    return VX.Geometry.rot(cx, cy, t.angle || 0, pts[n & 3].x, pts[n & 3].y);
+  }
+
+  const finite = (v) => typeof v === "number" && Number.isFinite(v);
+
+  // connector 端点坐标：锚定形状优先，否则用存储的自由点
+  // 全部校验有限值——一个 NaN 端点会让整条连接线（含箭头）画不出来，看起来像“消失了”
+  function endpointOf(sh, which) {
+    const glue = sh.glue && sh.glue[which];
+    if (typeof glue === "string") {
+      const idx = glue.indexOf(":");
+      if (idx > 0) {
+        const t = VX.Model.shape(glue.slice(0, idx));
+        if (t && finite(t.x) && finite(t.y) && finite(t.w) && finite(t.h)) {
+          const a = anchorOf(t, +glue.slice(idx + 1));
+          if (finite(a.x) && finite(a.y)) return a;
+        }
+      }
+    }
+    const p = sh[which]; // {x,y}
+    return p && finite(p.x) && finite(p.y) ? { x: p.x, y: p.y } : null;
+  }
+
+  function glueNormal(sh, which) {
+    const glue = sh.glue && sh.glue[which];
+    if (typeof glue !== "string") return null;
+    const idx = glue.indexOf(":");
+    if (idx <= 0) return null;
+    const t = VX.Model.shape(glue.slice(0, idx));
+    if (!t) return null;
+    const n = +glue.slice(idx + 1) & 3;
+    const nv = NORMALS[n];
+    if (!t.angle) return nv;
+    const cos = Math.cos(t.angle), sin = Math.sin(t.angle);
+    return { x: nv.x * cos - nv.y * sin, y: nv.x * sin + nv.y * cos };
+  }
+
+  // 曲线：A→B 的三次贝塞尔控制点（锚定端沿出线法向拉出，自由端沿直线方向拉出）
+  function curveOf(sh) {
+    const A = endpointOf(sh, "begin");
+    const B = endpointOf(sh, "end");
+    if (!A || !B) return null;
+    const na = glueNormal(sh, "begin");
+    const nb = glueNormal(sh, "end");
+    const d = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+    // 双自由端：给一个轻微弧度，避免“选了曲线却还是一条直线”
+    if (!na && !nb) {
+      const ux = (B.x - A.x) / d, uy = (B.y - A.y) / d;
+      const bow = Math.min(d * 0.18, 80);
+      const px = -uy * bow, py = ux * bow;
+      return {
+        A, B,
+        c1: { x: A.x + ux * d * 0.25 + px, y: A.y + uy * d * 0.25 + py },
+        c2: { x: A.x + ux * d * 0.75 + px, y: A.y + uy * d * 0.75 + py },
+      };
+    }
+    const k = Math.max(30, Math.min(d * 0.5, 140));
+    const c1 = na
+      ? { x: A.x + na.x * k, y: A.y + na.y * k }
+      : { x: A.x + (B.x - A.x) * 0.4, y: A.y + (B.y - A.y) * 0.4 };
+    const c2 = nb
+      ? { x: B.x + nb.x * k, y: B.y + nb.y * k }
+      : { x: B.x - (B.x - A.x) * 0.4, y: B.y - (B.y - A.y) * 0.4 };
+    return { A, B, c1, c2 };
+  }
+
+  // 三次贝塞尔采样（命中/手柄/标签定位复用）
+  function sampleCurve(cv, n) {
+    const out = [];
+    const N = n || 24;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, u = 1 - t;
+      const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+      out.push({
+        x: a * cv.A.x + b * cv.c1.x + c * cv.c2.x + d * cv.B.x,
+        y: a * cv.A.y + b * cv.c1.y + c * cv.c2.y + d * cv.B.y,
+      });
+    }
+    return out;
+  }
+
+  // 正交折线：a → b（a 已按其法向出线；na/nb 为出线法向，null=自由端）
+  // 注意：一端自由一端粘附时 na 可能为 null，必须补出等价法向——
+  // 直接读 na.x/na.y 会抛异常并中断整帧渲染，连接线“看起来消失”了
+  function elbow(a, b, na, nb) {
+    if (!a || !b) return [];
+    const pts = [];
+    const midx = (a.x + b.x) / 2, midy = (a.y + b.y) / 2;
+    const aH = na ? na.x !== 0 : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+
+    if (!na && !nb) {
+      // 双自由端：L 形
+      if (aH) { pts.push({ x: b.x, y: a.y }); }
+      else { pts.push({ x: a.x, y: b.y }); }
+      return pts;
+    }
+
+    // 自由端按主方向推定法向，后续分支可安全使用 na
+    if (!na) {
+      na = aH ? { x: b.x >= a.x ? 1 : -1, y: 0 } : { x: 0, y: b.y >= a.y ? 1 : -1 };
+    }
+
+    if (aH) {
+      // a 水平出线：先水平再垂直
+      let x2;
+      if (!nb) x2 = b.x;
+      else if (nb.x !== 0) {
+        // b 也水平出线：面对面（法向相对）直接对接，否则绕中轴
+        const faceToFace = (na.x > 0 && nb.x < 0) || (na.x < 0 && nb.x > 0);
+        const okDir = (na.x > 0 && b.x > a.x) || (na.x < 0 && b.x < a.x);
+        x2 = (faceToFace && okDir) ? b.x : midx;
+      } else {
+        // b 垂直出线：直接对到 b.x（若与 a 出线方向不倒退），否则绕
+        const okDir = (na.x > 0 && b.x > a.x) || (na.x < 0 && b.x < a.x);
+        x2 = okDir ? b.x : midx;
+      }
+      pts.push({ x: x2, y: a.y });
+      if (Math.abs(x2 - b.x) > 0.5) pts.push({ x: x2, y: b.y });
+    } else {
+      // a 垂直出线：先垂直再水平
+      let y2;
+      if (!nb) y2 = b.y;
+      else if (nb.y !== 0) {
+        const faceToFace = (na.y > 0 && nb.y < 0) || (na.y < 0 && nb.y > 0);
+        const okDir = (na.y > 0 && b.y > a.y) || (na.y < 0 && b.y < a.y);
+        y2 = (faceToFace && okDir) ? b.y : midy;
+      } else {
+        const okDir = (na.y > 0 && b.y > a.y) || (na.y < 0 && b.y < a.y);
+        y2 = okDir ? b.y : midy;
+      }
+      pts.push({ x: a.x, y: y2 });
+      if (Math.abs(y2 - b.y) > 0.5) pts.push({ x: b.x, y: y2 });
+    }
+    return pts;
+  }
+
+  // 折线整理：去重、去“原路折返”、去非有限坐标
+  // 折返（A→B→A）会让两段线完全重叠、箭头停在中间，视觉上像连接线断了/没了
+  function tidy(pts) {
+    const out = [];
+    for (const p of pts || []) {
+      if (!p || !finite(p.x) || !finite(p.y)) continue;
+      const q = out[out.length - 1];
+      if (q && Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) continue;
+      out.push({ x: p.x, y: p.y });
+    }
+    for (let i = 0; i + 2 < out.length;) {
+      const a = out[i], b = out[i + 1], c2 = out[i + 2];
+      const abx = b.x - a.x, aby = b.y - a.y;
+      const bcx = c2.x - b.x, bcy = c2.y - b.y;
+      const cross = abx * bcy - aby * bcx;
+      const dot = abx * bcx + aby * bcy;
+      // 共线且反向 → 中间的 b 是折返点，直接去掉
+      if (Math.abs(cross) < 0.01 && dot < 0) { out.splice(i + 1, 1); if (i > 0) i--; }
+      else i++;
+    }
+    return out.length >= 2 ? out : null;
+  }
+
+  // connector → 世界坐标折线点列（渲染/命中实时计算，移动形状自动跟随）
+  function pointsOf(sh) {
+    const A = endpointOf(sh, "begin");
+    const B = endpointOf(sh, "end");
+    if (!A || !B) return null;
+
+    // 曲线：返回采样折线，命中/端点/分段拖拽都与折线一致
+    if (sh.route === "curve") {
+      const cv = curveOf(sh);
+      return cv ? sampleCurve(cv, 24) : [A, B];
+    }
+
+    // 手动编辑过的折线：保留用户拖出的中间点，端点仍跟随粘附
+    if (sh.route === "manual" && Array.isArray(sh.points) && sh.points.length >= 2) {
+      const pts = sh.points.map((p) => ({ x: p.x, y: p.y }));
+      pts[0] = { x: A.x, y: A.y };
+      pts[pts.length - 1] = { x: B.x, y: B.y };
+      return tidy(pts) || [A, B];
+    }
+
+    if (sh.route === "straight") return [A, B];
+
+    const na = glueNormal(sh, "begin");
+    const nb = glueNormal(sh, "end");
+    const a = na ? { x: A.x + na.x * LEAD, y: A.y + na.y * LEAD } : A;
+    const b = nb ? { x: B.x + nb.x * LEAD, y: B.y + nb.y * LEAD } : B;
+
+    const pts = [A];
+    if (na) pts.push(a);
+    pts.push(...elbow(a, b, na, nb));
+    if (nb) pts.push(b);
+    pts.push(B);
+    // 去除相邻重复点 + 折返点
+    return tidy(pts) || [A, B];
+  }
+
+  // 点到 connector 折线的最短距离（世界坐标）
+  function distTo(sh, wx, wy) {
+    const pts = pointsOf(sh);
+    if (!pts || pts.length < 2) return Infinity;
+    let best = Infinity;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const d = distToSeg(wx, wy, pts[i], pts[i + 1]);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  function distToSeg(px, py, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-9) return Math.hypot(px - a.x, py - a.y);
+    let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+  }
+
+  VX.Routing = { anchorOf, endpointOf, glueNormal, curveOf, sampleCurve, pointsOf, distTo, NORMALS, LEAD };
+})();
+
+</script>
+<script>
+// images.js —— 图片资产（P6.5 / S3）：导入、hash 去重、尺寸探测、插入形状
+// 资产存到文档顶层 doc.assets[]：{ id, name, mime, w, h, hash, dataUrl }
+// dataUrl 直接参与序列化，保存 vsdx 时由后端写入 visio/media/*
+"use strict";
+
+window.VX = window.VX || {};
+
+(function () {
+  const S = () => VX.state;
+  const cache = new Map();    // assetId → HTMLImageElement（已解码）
+  const loading = new Set();  // 正在解码的 assetId，避免每帧重复 new Image()
+
+  const MIME_EXT = {
+    "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+    "image/gif": "gif", "image/webp": "webp", "image/svg+xml": "svg",
+  };
+  const EXT_MIME = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+    webp: "image/webp", svg: "image/svg+xml",
+  };
+
+  // 32 位 FNV-1a：只用来判「同一张图」，不做加密
+  function hashOf(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return h.toString(16);
+  }
+
+  function mimeOf(dataUrl) {
+    const m = /^data:([^;,]+)/.exec(dataUrl || "");
+    return m ? m[1].toLowerCase() : "image/png";
+  }
+
+  function extOf(mime) { return MIME_EXT[mime] || "png"; }
+
+  function assets() {
+    const doc = VX.Model.doc;
+    if (!Array.isArray(doc.assets)) doc.assets = [];
+    return doc.assets;
+  }
+
+  function asset(id) { return assets().find((a) => a.id === id) || null; }
+
+  function decode(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("图片解码失败"));
+      img.src = dataUrl;
+    });
+  }
+
+  function nextAssetId() {
+    let max = 0;
+    for (const a of assets()) {
+      const n = parseInt(String(a.id).slice(1), 10) || 0;
+      max = Math.max(max, n);
+    }
+    return "a" + (max + 1);
+  }
+
+  // 加一张图（dataURL）：同一内容只存一份，返回已有资产
+  async function addDataUrl(dataUrl, name) {
+    const mime = mimeOf(dataUrl);
+    const hash = hashOf(dataUrl);
+    const hit = assets().find((a) => a.hash === hash);
+    if (hit) return hit;
+
+    const img = await decode(dataUrl);
+    const a = {
+      id: nextAssetId(),
+      name: name || ("图片-" + (assets().length + 1)),
+      mime,
+      ext: extOf(mime),
+      w: img.naturalWidth || 1,
+      h: img.naturalHeight || 1,
+      hash,
+      dataUrl,
+    };
+    assets().push(a);
+    cache.set(a.id, img);
+    S().dirty = true;
+    VX.Events.emit("change");
+    return a;
+  }
+
+  // 渲染时取图：未解码则登记一次异步解码，成功后刷新画布
+  function imageOf(a) {
+    if (!a) return null;
+    if (cache.has(a.id)) return cache.get(a.id);
+    if (!a.dataUrl || loading.has(a.id)) return null;
+    loading.add(a.id);
+    decode(a.dataUrl).then((img) => {
+      cache.set(a.id, img);
+      loading.delete(a.id);
+      // 导出页没有 VX.state（只有 canvas 局部 dirty 标志），由运行时自己监听 onload 重绘
+      if (VX.Renderer && VX.state) VX.Renderer.invalidate();
+    }).catch(() => {
+      loading.delete(a.id);
+    });
+    return null;
+  }
+
+  // 默认插入尺寸：长边不超过 maxSize，保持宽高比
+  function defaultSize(a, maxSize) {
+    const max = maxSize || 360;
+    const iw = a.w || 1, ih = a.h || 1;
+    const k = Math.min(1, max / Math.max(iw, ih));
+    return { w: Math.max(8, Math.round(iw * k)), h: Math.max(8, Math.round(ih * k)) };
+  }
+
+  // 在 world 点插入图片形状；(x,y) 是形状左上角
+  function insert(a, x, y, size) {
+    if (!a) return null;
+    const d = size || defaultSize(a);
+    let s = null;
+    VX.History.run("插入图片", () => {
+      s = VX.Model.addShape("image", {
+        assetId: a.id, fit: "contain",
+        x: Math.round(x), y: Math.round(y), w: d.w, h: d.h,
+        text: "",
+      });
+      S().selection = [s.id];
+    });
+    return s;
+  }
+
+  // 拖入/粘贴的 File → 资产 → 形状（world 点为中心）
+  async function insertFile(file, world) {
+    if (!file || !/(^image\/)|\.svg$/i.test(file.type || file.name || "")) return null;
+    const dataUrl = await readAsDataUrl(file);
+    const a = await addDataUrl(dataUrl, file.name);
+    const d = defaultSize(a);
+    return insert(a, world.x - d.w / 2, world.y - d.h / 2, d);
+  }
+
+  function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ""));
+      r.onerror = () => reject(new Error("读取图片失败"));
+      r.readAsDataURL(file);
+    });
+  }
+
+  // 菜单「插入 → 图片…」：无 Bridge 时退化为浏览器的文件选择框
+  async function pickAndInsert() {
+    const world = S().insertAt || VX.Viewport.s2w(
+      document.getElementById("canvas").clientWidth / 2,
+      document.getElementById("canvas").clientHeight / 2);
+    let a = null;
+    const bridge = window.__tauricpp__;
+    if (bridge) {
+      try {
+        const r = await bridge.invoke("file.open_image", {});
+        if (!r || !r.success) return null;
+        const dataUrl = "data:" + (r.mime || "image/png") + ";base64," + r.base64;
+        a = await addDataUrl(dataUrl, r.name || r.path);
+      } catch (e) {
+        console.error("file.open_image failed:", e);
+        return null;
+      }
+    } else {
+      const file = await browseLocalFile();
+      if (!file) return null;
+      a = await addDataUrl(await readAsDataUrl(file), file.name);
+    }
+    if (!a) return null;
+    const d = defaultSize(a);
+    return insert(a, world.x - d.w / 2, world.y - d.h / 2, d);
+  }
+
+  // 浏览器直开时的文件选择（桌面端走原生对话框）
+  function browseLocalFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml";
+      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
+      input.click();
+    });
+  }
+
+  function bindMenu() {
+    const drop = document.getElementById("menu-insert");
+    if (!drop) return;
+    drop.addEventListener("click", (e) => {
+      const entry = e.target.closest(".menu-entry");
+      if (!entry) return;
+      drop.classList.add("hidden");
+      if (entry.dataset.act === "insert-image") pickAndInsert();
+    });
+  }
+
+  // 拖拽图片文件到画布：以落点为中心插入
+  function bindDrop() {
+    const scroll = document.getElementById("canvas-scroll");
+    if (!scroll) return;
+    scroll.addEventListener("dragover", (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) e.preventDefault();
+    });
+    scroll.addEventListener("drop", async (e) => {
+      const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      if (!files.length) return;
+      e.preventDefault();
+      const canvas = document.getElementById("canvas");
+      const rect = canvas.getBoundingClientRect();
+      const w = VX.Viewport.s2w(e.clientX - rect.left, e.clientY - rect.top);
+      for (const f of files) {
+        try { await insertFile(f, w); } catch (err) { console.warn("插入图片失败:", err); }
+      }
+    });
+  }
+
+  const Images = {
+    assets, asset, addDataUrl, imageOf, insert, insertFile, defaultSize, extOf, mimeOf,
+    init() {
+      bindMenu();
+      bindDrop();
+    },
+  };
+
+  VX.Images = Images;
+})();
+
+</script>
+<script>
+// repeater.js —— 中继器（P6.5 / A2）
+// 结构：shape.type = "repeater"
+//   shape.repeater = {
+//     columns: ["标题", "说明"],            // 列名（缺省时从 dataset 的键推导）
+//     dataset: [ { 标题: "...", 说明: "..." } ],
+//     layout: { mode: "vertical"|"grid", gap, gapX, gapY, cols, rowHeight },
+//     pageSize: 0,                          // >0 时分页
+//     template: [ shapes... ]               // 模板子形状，坐标相对中继器左上角（0,0）
+//   }
+// 视图状态（过滤/排序/分页）写在 shape.repeater.view 上，供交互动作运行时改写。
+// 渲染与导出都用 items() + instantiate()：前者算每条数据的偏移，后者深拷贝模板并做 {{列名}} 插值。
+"use strict";
+
+window.VX = window.VX || {};
+
+(function () {
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // 列名：显式 columns 优先，否则按 dataset 里出现过的键顺序去重
+  function columns(rep) {
+    if (!rep) return [];
+    if (Array.isArray(rep.columns) && rep.columns.length) return rep.columns;
+    const out = [];
+    for (const row of rep.dataset || []) {
+      if (!row || typeof row !== "object") continue;
+      for (const k of Object.keys(row)) if (out.indexOf(k) < 0) out.push(k);
+    }
+    return out;
+  }
+
+  // 模板包围盒（模板坐标相对中继器左上角）：无形状时回退 1×1，避免除零/负偏移
+  function bounds(template) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const walk = (arr) => {
+      for (const s of arr || []) {
+        if (!s) continue;
+        if (s.type === "group" || s.type === "instance") { walk(s.children); continue; }
+        if (s.type === "connector") {
+          for (const p of [s.begin, s.end]) {
+            if (!p) continue;
+            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+          }
+          continue;
+        }
+        minX = Math.min(minX, s.x || 0); minY = Math.min(minY, s.y || 0);
+        maxX = Math.max(maxX, (s.x || 0) + (s.w || 0)); maxY = Math.max(maxY, (s.y || 0) + (s.h || 0));
+      }
+    };
+    walk(template);
+    if (minX === Infinity) return { x: 0, y: 0, w: 1, h: 1 };
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
+  // 过滤 → 排序 → 分页；返回 [{ row, index }]，index 是 dataset 里的原始下标（删行用）
+  function visibleRows(rep) {
+    let rows = (rep.dataset || []).map((row, index) => ({ row: row || {}, index }));
+    const view = rep.view || {};
+
+    const f = view.filter;
+    if (f && f.column) {
+      const want = f.value == null ? "" : String(f.value);
+      rows = rows.filter(({ row }) => {
+        const raw = row[f.column];
+        const s = raw == null ? "" : String(raw);
+        const n = Number(raw);
+        switch (f.op) {
+          case "equals": return s === want;
+          case "notEquals": return s !== want;
+          case "gt": return isFinite(n) && n > Number(want);
+          case "lt": return isFinite(n) && n < Number(want);
+          case "empty": return s === "";
+          case "notEmpty": return s !== "";
+          default: return s.toLowerCase().indexOf(want.toLowerCase()) >= 0; // contains
+        }
+      });
+    }
+
+    const so = view.sort;
+    if (so && so.column) {
+      const dir = so.dir === "desc" ? -1 : 1;
+      rows.sort((a, b) => {
+        const av = a.row[so.column], bv = b.row[so.column];
+        const an = Number(av), bn = Number(bv);
+        const numeric = av !== "" && bv !== "" && isFinite(an) && isFinite(bn);
+        const d = numeric
+          ? an - bn
+          : String(av == null ? "" : av).localeCompare(String(bv == null ? "" : bv), "zh-CN");
+        return d * dir;
+      });
+    }
+
+    const size = Number(view.pageSize != null ? view.pageSize : rep.pageSize) || 0;
+    let pageCount = 1;
+    if (size > 0) {
+      pageCount = Math.max(1, Math.ceil(rows.length / size));
+      const p = Math.min(Math.max(0, Number(view.page) || 0), pageCount - 1);
+      rows = rows.slice(p * size, p * size + size);
+    }
+    rows.pageCount = pageCount;
+    return rows;
+  }
+
+  // 每条数据的布局偏移：模板包围盒左上角对齐到 (0,0)，再按竖向/网格排开
+  function items(s) {
+    const rep = (s && s.repeater) || {};
+    const lay = rep.layout || {};
+    const list = visibleRows(rep);
+    const tb = bounds(rep.template || []);
+    const gap = Number(lay.gap != null ? lay.gap : 8);
+    const out = [];
+    if ((lay.mode || "vertical") === "grid") {
+      const cols = Math.max(1, Math.round(Number(lay.cols) || 1));
+      const cw = tb.w + Number(lay.gapX != null ? lay.gapX : gap);
+      const ch = tb.h + Number(lay.gapY != null ? lay.gapY : gap);
+      list.forEach((it, i) => out.push({
+        row: it.row, index: it.index,
+        dx: -tb.x + (i % cols) * cw,
+        dy: -tb.y + Math.floor(i / cols) * ch,
+      }));
+    } else {
+      const rh = Number(lay.rowHeight) > 0 ? Number(lay.rowHeight) : tb.h + gap;
+      list.forEach((it, i) => out.push({ row: it.row, index: it.index, dx: -tb.x, dy: -tb.y + i * rh }));
+    }
+    out.pageCount = list.pageCount;
+    out.total = (rep.dataset || []).length;
+    return out;
+  }
+
+  // {{列名}} 插值：缺列时留空（不是保留 {{...}}，否则导出的原型会露出模板语法）
+  function interpolate(text, row) {
+    if (typeof text !== "string" || !text) return text;
+    if (!text || text.indexOf("{{") < 0) return text;
+    return text.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m, name) => {
+      const v = row ? row[name] : undefined;
+      return v == null ? "" : String(v);
+    });
+  }
+
+  // 深拷贝模板并整体平移到 (ox,oy)，文本按行插值。
+  // 组的子形状/面板子形状/连接线端点都是世界坐标，因此整棵子树一起平移。
+  function instantiate(template, row, ox, oy) {
+    return (template || []).map((s) => {
+      const c = clone(s);
+      offsetTree(c, ox, oy);
+      applyText(c, row);
+      return c;
+    });
+  }
+
+  function applyText(s, row) {
+    if (s.text) s.text = interpolate(s.text, row);
+    for (const c of s.children || []) applyText(c, row);
+    for (const st of (s.panel && s.panel.states) || []) for (const c of st.shapes || []) applyText(c, row);
+    return s;
+  }
+
+  function offsetTree(s, dx, dy) {
+    s.x = (s.x || 0) + dx;
+    s.y = (s.y || 0) + dy;
+    if (s.type === "connector") {
+      if (s.begin) { s.begin.x += dx; s.begin.y += dy; }
+      if (s.end) { s.end.x += dx; s.end.y += dy; }
+    }
+    if (s.children) for (const c of s.children) offsetTree(c, dx, dy);
+    if (s.panel) for (const st of s.panel.states || []) for (const c of st.shapes || []) offsetTree(c, dx, dy);
+    if (s.repeater && s.repeater.template) for (const c of s.repeater.template) offsetTree(c, dx, dy);
+    return s;
+  }
+
+  // 默认模板：白底卡片 + 标题 + 说明，两行文字用 {{列名}} 占位
+  function defaultTemplate() {
+    const font = (patch) => Object.assign(
+      { family: "Segoe UI", size: 14, color: "#22252B", bold: false, align: "left", vAlign: "top" },
+      patch || {});
+    return [
+      { type: "rect", x: 0, y: 0, w: 240, h: 56,
+        style: { fill: "#FFFFFF", line: "#E2E5EA", lineWidth: 1, cornerRadius: 8, opacity: 1, font: font({}) } },
+      { type: "text", x: 12, y: 8, w: 216, h: 20, text: "{{标题}}", textIsTemplate: true,
+        style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font({ bold: true }) } },
+      { type: "text", x: 12, y: 29, w: 216, h: 18, text: "{{说明}}", textIsTemplate: true,
+        style: { fill: "transparent", line: "transparent", lineWidth: 0, font: font({ size: 12, color: "#6E737D" }) } },
+    ];
+  }
+
+  // 新建中继器的属性（stencils 与「插入中继器」共用）
+  function defaultShape() {
+    const dataset = [
+      { 标题: "列表项一", 说明: "这里是说明文字" },
+      { 标题: "列表项二", 说明: "这里是说明文字" },
+      { 标题: "列表项三", 说明: "这里是说明文字" },
+    ];
+    const rowH = 64;
+    return {
+      type: "repeater",
+      w: 260,
+      h: dataset.length * rowH,
+      style: { fill: "transparent", line: "transparent", lineWidth: 1, opacity: 1,
+               font: { family: "Segoe UI", size: 14, color: "#333333", bold: false, align: "left", vAlign: "top" } },
+      repeater: {
+        columns: ["标题", "说明"],
+        dataset,
+        layout: { mode: "vertical", gap: 8, rowHeight: rowH, cols: 2 },
+        pageSize: 0,
+        template: defaultTemplate(),
+      },
+    };
+  }
+
+  // 模板变化后按行数把容器高度贴合内容（竖向布局）
+  function relayout(s) {
+    if (!s || !s.repeater) return;
+    const lay = s.repeater.layout || {};
+    if ((lay.mode || "vertical") !== "vertical") return;
+    const n = Math.max(1, (s.repeater.dataset || []).length);
+    const rh = Number(lay.rowHeight) > 0 ? Number(lay.rowHeight) : bounds(s.repeater.template).h + 8;
+    s.h = n * rh;
+  }
+
+  // ---------- 数据集编辑：CSV 文本 ↔ dataset ----------
+  function csvCell(v) {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function toCsv(rep) {
+    const cols = columns(rep);
+    const lines = [cols.map(csvCell).join(",")];
+    for (const row of rep.dataset || []) lines.push(cols.map((c) => csvCell(row ? row[c] : "")).join(","));
+    return lines.join("\n");
+  }
+
+  // 第一行是列名，之后每行一条数据；引号内的逗号/换行按 CSV 规则处理
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], cell = "", quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else cell += ch;
+        continue;
+      }
+      if (ch === '"') { quoted = true; continue; }
+      if (ch === ",") { row.push(cell); cell = ""; continue; }
+      if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(cell); cell = "";
+        rows.push(row); row = [];
+        continue;
+      }
+      cell += ch;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter((r) => r.length && r.some((c) => c !== ""));
+  }
+
+  function setCsv(rep, text) {
+    const rows = parseCsv(text || "");
+    if (!rows.length) return false;
+    const cols = rows[0].map((c) => c.trim()).filter(Boolean);
+    if (!cols.length) return false;
+    rep.columns = cols;
+    rep.dataset = rows.slice(1).map((r) => {
+      const o = {};
+      cols.forEach((c, i) => { o[c] = r[i] != null ? r[i] : ""; });
+      return o;
+    });
+    return true;
+  }
+
+  const Repeater = {
+    columns, bounds, visibleRows, items, interpolate, instantiate, offsetTree,
+    defaultTemplate, defaultShape, relayout, toCsv, parseCsv, setCsv,
+  };
+
+  VX.Repeater = Repeater;
+})();
+
+</script>
+<script>
+// hit.js —— 命中测试（P1/P2）
+// P2：path 精确命中（Path2D）、group 递归、connector 折线距离、图层可见/锁定过滤
+"use strict";
+
+(function () {
+  // 离屏 2D 上下文：仅用于 isPointInPath/isPointInStroke 判定
+  const mctx = document.createElement("canvas").getContext("2d");
+
+  // 点是否在旋转形状包围盒内（粗判，局部 AABB）
+  function inAABB(s, wx, wy) {
+    const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+    let dx = wx - cx, dy = wy - cy;
+    if (s.angle) {
+      const cos = Math.cos(-s.angle), sin = Math.sin(-s.angle);
+      const rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
+      dx = rx; dy = ry;
+    }
+    return dx >= -s.w / 2 && dx <= s.w / 2 && dy >= -s.h / 2 && dy <= s.h / 2;
+  }
+
+  // 世界 → 形状局部坐标（原点=中心，逆旋转）
+  function toLocal(s, wx, wy) {
+    const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+    let dx = wx - cx, dy = wy - cy;
+    if (s.angle) {
+      const cos = Math.cos(-s.angle), sin = Math.sin(-s.angle);
+      const rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
+      dx = rx; dy = ry;
+    }
+    return { x: dx, y: dy };
+  }
+
+  function buildPath2D(s) {
+    const p2d = new Path2D();
+    const subpaths = (s.path && s.path.subpaths) || [];
+    const closedFlags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+    // 与 renderer 同口径：局部坐标是设计尺寸下的，要按包围盒缩放
+    const ks = VX.Geometry.pathScale(s);
+    for (let k = 0; k < subpaths.length; k++) {
+      const ring = subpaths[k];
+      for (let i = 0; i < ring.length; i++) {
+        if (i) p2d.lineTo(ring[i].x * ks.kx, ring[i].y * ks.ky); else p2d.moveTo(ring[i].x * ks.kx, ring[i].y * ks.ky);
+      }
+      // 与 renderer 同口径：默认闭合，只有显式声明开放的折线不闭合
+      if (!closedFlags || closedFlags[k] !== false) p2d.closePath();
+    }
+    return p2d;
+  }
+
+  function inShape(s, wx, wy) {
+    if (s.type === "connector") {
+      return VX.Routing.distTo(s, wx, wy) <= 6 / VX.state.zoom;
+    }
+    if (s.type === "group" || s.type === "instance") {
+      if (!inAABB(s, wx, wy)) return false;
+      return (s.children || []).some((ch) => !ch.lock && inShape(ch, wx, wy));
+    }
+    if (s.type === "panel") {
+      // 开启裁剪时视口外的溢出内容既看不到，也不该被点中
+      if (VX.Model.panelClip(s) && !inAABB(s, wx, wy)) return false;
+      const st = VX.Model.panelState(s);
+      return st ? (st.shapes || []).some((ch) => !ch.lock && inShape(ch, wx, wy)) : false;
+    }
+    if (!inAABB(s, wx, wy)) return false;
+    if (s.type === "path") {
+      const loc = toLocal(s, wx, wy);
+      const p2d = buildPath2D(s);
+      const rule = s.path && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd";
+      if (mctx.isPointInPath(p2d, loc.x, loc.y, rule)) return true;
+      // 命中描边（线宽 + 容差）
+      const lw = (s.style && s.style.lineWidth) || 1;
+      mctx.lineWidth = lw + 4;
+      if (mctx.isPointInStroke(p2d, loc.x, loc.y)) return true;
+      return false;
+    }
+    return true; // rect/ellipse/text/image 等 AABB 即可
+  }
+
+  // 图层可见/锁定过滤：隐藏层不可见，锁定层不可选中
+  function selectable(s) {
+    if (s.lock) return false;
+    const lay = (VX.Model.page().layers || []).find((l) => l.id === s.layer);
+    if (lay && (!lay.visible || lay.locked)) return false;
+    return true;
+  }
+
+  const Hit = {
+    // 返回命中的最上层形状（按 z 降序）；enterGroupId 设置时进入该组内部选择子形状
+    shapeAt(wx, wy) {
+      const shapes = VX.Model.shapes();
+      const enter = VX.state.enterGroup;
+      const pe = VX.state.panelEdit;
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const s = shapes[i];
+        if (pe && s.id === pe.panelId) {
+          // 面板状态编辑：只在该状态的形状中选择
+          const st = VX.Model.panelStateById(s, pe.stateId) || VX.Model.panelState(s);
+          const kids = st ? st.shapes || [] : [];
+          for (let j = kids.length - 1; j >= 0; j--) {
+            if (inShape(kids[j], wx, wy)) return kids[j];
+          }
+          return null;
+        }
+        if (enter && s.id === enter) {
+          // 组内模式：只在该组 children 中选择
+          const kids = s.children || [];
+          for (let j = kids.length - 1; j >= 0; j--) {
+            if (inShape(kids[j], wx, wy)) return kids[j];
+          }
+          return null;
+        }
+        if (pe && s.type === "panel") continue; // 面板编辑时其他面板按普通形状处理
+        if (!selectable(s)) continue;
+        if (inShape(s, wx, wy)) return s;
+      }
+      return null;
+    },
+
+    // 预览运行时用：按页面形状树 + 交互覆盖做命中（含面板当前状态、位移/隐藏覆盖）
+    inPage(shapes, wx, wy, opts) {
+      const arr = shapes || [];
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const s = arr[i];
+        const ov = (opts && opts.over) ? opts.over(s) : null;
+        if (ov && ov.visible === false) continue;
+        const dx = (ov && ov.dx) || 0, dy = (ov && ov.dy) || 0;
+        if (s.type === "panel") {
+          // 与渲染同口径：裁剪后框外的内容不可命中（交互位移先还原）
+          if (VX.Model.panelClip(s) && !inAABB(s, wx - dx, wy - dy)) continue;
+          const stateId = ov && ov.state;
+          const st = stateId ? (VX.Model.panelStateById(s, stateId) || VX.Model.panelState(s)) : VX.Model.panelState(s);
+          const hit = this.inPage(st ? st.shapes : [], wx - dx, wy - dy, opts);
+          if (hit) return hit;
+          continue;
+        }
+        if (s.type === "group" || s.type === "instance") {
+          if (!inAABB(s, wx - dx, wy - dy)) continue;
+          const hit = this.inPage(s.children, wx - dx, wy - dy, opts);
+          if (hit) return hit;
+          continue;
+        }
+        if (inShape(s, wx - dx, wy - dy)) return s;
+      }
+      return null;
+    },
+
+    // 连接点吸附容差（屏幕像素 → 世界坐标）
+    anchorTolerance(tolPx) { return (tolPx || 10) / (VX.state.zoom || 1); },
+
+    // connector 工具 / 端点拖拽：命中形状并返回最近连接点序号（0..3），未命中返回 null
+    // 1) 连接点吸附优先（形状外侧也可命中）；2) 落在形状内则取最近边中点
+    // tolPx：贴近形状连接点的吸附半径（屏幕像素），端点拖拽可调大以“接近即吸附”
+    // anchorsOnly：true 时只吸附到连接点（端点拖拽），不按“形状内部就近边中点”回退
+    shapeAndAnchor(wx, wy, tolPx, anchorsOnly) {
+      const shapes = VX.Model.shapes();
+      const tol = this.anchorTolerance(tolPx);
+      let best = null;
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const s = shapes[i];
+        if (s.type === "connector" || s.type === "group") continue;
+        if (!selectable(s)) continue;
+        for (let n = 0; n < 4; n++) {
+          const a = VX.Routing.anchorOf(s, n);
+          const d = Math.hypot(wx - a.x, wy - a.y);
+          if (d <= tol && (!best || d < best.d)) best = { shape: s, anchor: n, d };
+        }
+      }
+      if (best) return { shape: best.shape, anchor: best.anchor };
+      if (anchorsOnly) return null;
+
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const s = shapes[i];
+        if (s.type === "connector" || s.type === "group") continue;
+        if (!selectable(s)) continue;
+        if (!inAABB(s, wx, wy)) continue;
+        const cands = [];
+        for (let n = 0; n < 4; n++) {
+          const a = VX.Routing.anchorOf(s, n);
+          cands.push({ n, d: Math.hypot(wx - a.x, wy - a.y) });
+        }
+        cands.sort((p, q) => p.d - q.d);
+        return { shape: s, anchor: cands[0].n };
+      }
+      return null;
+    },
+
+    guideAt(wx, wy) {
+      const guides = VX.Model.page().guides;
+      const tol = 4 / VX.state.zoom;
+      for (let i = guides.length - 1; i >= 0; i--) {
+        const g = guides[i];
+        if (g.dir === "v" && Math.abs(wx - g.pos) < tol) return { index: i, dir: "v" };
+        if (g.dir === "h" && Math.abs(wy - g.pos) < tol) return { index: i, dir: "h" };
+      }
+      return null;
+    },
+
+    inShape,
+    inAABB,
+    selectable,
+  };
+
+  VX.Hit = Hit;
+})();
+
+</script>
+<script>
+// renderer.js —— Canvas 2D 渲染器（P1）
+// 脏标记 + rAF：仅在 dirty 时重绘（对齐 CODEPLAN.md §6 按需重绘策略）
+"use strict";
+
+(function () {
+  let canvas = null, ctx = null, host = null; // host = #canvas-scroll，用于取容器尺寸
+
+  function fontString(f) {
+    // 回退链：Visio 常用 Liberation Sans/Arial，本机没装时先退到 Arial 再退 CJK 字体；
+    // 把中文字体排在前面会让拉丁字母的字距明显偏宽，文本行宽/换行位置跟不上 Visio
+    return `${f.bold ? "bold " : ""}${f.size}px '${f.family}', Arial, Helvetica, 'Microsoft YaHei', sans-serif`;
+  }
+
+  // 圆角矩形路径：老版本 WebView2 没有 ctx.roundRect，退化为手写路径
+  // （直接调用不存在的方法会抛异常，导致整帧渲染中断——后面的形状全部画不出来）
+  function roundRectPath(c, x, y, w, h, r) {
+    if (typeof c.roundRect === "function") { c.roundRect(x, y, w, h, r || 0); return; }
+    const rad = Math.max(0, Math.min(r || 0, Math.abs(w) / 2, Math.abs(h) / 2));
+    c.moveTo(x + rad, y);
+    c.lineTo(x + w - rad, y);
+    c.arcTo(x + w, y, x + w, y + rad, rad);
+    c.lineTo(x + w, y + h - rad);
+    c.arcTo(x + w, y + h, x + w - rad, y + h, rad);
+    c.lineTo(x + rad, y + h);
+    c.arcTo(x, y + h, x, y + h - rad, rad);
+    c.lineTo(x, y + rad);
+    c.arcTo(x, y, x + rad, y, rad);
+    c.closePath();
+  }
+
+  // 屏幕最小描边宽度：缩小视图时 1.5px 线条会淡到看不见。
+  // 但这个「最小 1 屏幕像素」只属于编辑态：导出/预览的 scale 是靠 zoom 放大实现的，
+  // 若照搬会让 2x/3x 导出和 PDF 的线比 1x 细（同样的世界线宽被不同的屏幕下限夹住），
+  // 所以导出上下文（opts.exported）按真实世界线宽绘制
+  function strokeWidth(w, zoom, exported) {
+    if (exported) return Math.max(w || 0, 0.01);
+    return Math.max(w || 0, 1 / (zoom || 1));
+  }
+
+  // 虚线样式 → Canvas 虚线数组：数值是世界单位，按线宽缩放（与 Visio 线型的观感一致）。
+  // 对应 reader 的 style.dash（Visio LinePattern 2/3/4/5 及自定义图案）
+  const DASH_PATTERNS = {
+    dash: [4, 3],
+    dot: [1.2, 2.4],
+    dashDot: [4, 2.4, 1.2, 2.4],
+    dashDotDot: [4, 2.4, 1.2, 2.4, 1.2, 2.4],
+  };
+  function applyDash(c, st, lw) {
+    const pat = st && st.dash ? DASH_PATTERNS[st.dash] : null;
+    if (!pat) return false;
+    const k = Math.max(1, lw || 1);
+    c.setLineDash(pat.map((v) => v * k));
+    return true;
+  }
+
+  // 文本按宽度断行（逐字符，CJK 友好；P1 先支持单段落）
+  function wrapText(text, maxWidth, measure) {
+    const lines = [];
+    for (const raw of String(text).split("\n")) {
+      let line = "";
+      for (const ch of raw) {
+        if (measure(line + ch) > maxWidth && line) { lines.push(line); line = ch; }
+        else line += ch;
+      }
+      lines.push(line);
+    }
+    return lines;
+  }
+
+  // 连接线：实时布线折线/曲线 + 两端箭头（世界坐标绘制）
+  function drawConnector(c, s, label, opts) {
+    const st = s.style || {};
+    const lw = strokeWidth(st.lineWidth || 1.5, opts && opts.zoom, opts && opts.exported);
+    const color = st.line || "#37474f";
+    const pts = VX.Routing.pointsOf(s);
+    if (!pts || pts.length < 2) return;
+
+    // 面板状态淡入淡出时会给子形状叠加 opacity，连接线也要跟其它形状同口径
+    const ov = opts && opts.over ? opts.over(s) : null;
+    const extraAlpha = (ov && ov.opacity != null) ? ov.opacity : 1;
+    c.globalAlpha = (st.opacity != null ? st.opacity : 1) * extraAlpha;
+    c.strokeStyle = color;
+    c.lineWidth = lw;
+    c.lineJoin = "round";
+    c.lineCap = "round";
+    // 虚线连接线（Visio LinePattern）：虚线用平头，否则圆头会把空隙补上
+    const dashed = applyDash(c, st, lw);
+    if (dashed) c.lineCap = "butt";
+
+    // 箭头方向取端部切线：折线用相邻点，曲线用控制点
+    let beginFrom = pts[1], endFrom = pts[pts.length - 2];
+    if (s.route === "curve") {
+      const cv = VX.Routing.curveOf(s);
+      if (!cv) return;
+      c.beginPath();
+      c.moveTo(cv.A.x, cv.A.y);
+      c.bezierCurveTo(cv.c1.x, cv.c1.y, cv.c2.x, cv.c2.y, cv.B.x, cv.B.y);
+      c.stroke();
+      beginFrom = cv.c1;
+      endFrom = cv.c2;
+    } else {
+      c.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        if (i) c.lineTo(pts[i].x, pts[i].y); else c.moveTo(pts[i].x, pts[i].y);
+      }
+      c.stroke();
+    }
+
+    if (dashed) c.setLineDash([]);
+    drawArrow(c, endFrom, pts[pts.length - 1], arrowKind(st.arrowEndKind, st.arrowEnd !== false), lw, st.arrowEndSize);
+    drawArrow(c, beginFrom, pts[0], arrowKind(st.arrowBeginKind, !!st.arrowBegin), lw, st.arrowBeginSize);
+
+    c.globalAlpha = 1;
+    if (label) drawConnectorLabel(c, s, pts, label);
+  }
+
+  // 连接线标注：放在最长线段中点
+  function drawConnectorLabel(c, s, pts, label) {
+    const f = (s.style && s.style.font) || {};
+    let best = 0, bi = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const len = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+      if (len > best) { best = len; bi = i; }
+    }
+    const mx = (pts[bi].x + pts[bi + 1].x) / 2;
+    const my = (pts[bi].y + pts[bi + 1].y) / 2;
+    c.save();
+    c.fillStyle = f.color || "#333333";
+    c.font = fontString(f);
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    const lines = wrapText(label, 240, (t) => c.measureText(t).width);
+    const lh = (f.size || 12) * 1.25;
+    let ty = my - (lines.length - 1) * lh / 2;
+    for (const line of lines) { c.fillText(line, mx, ty); ty += lh; }
+    c.restore();
+  }
+
+  // 箭头形状：旧布尔值（true/false）与新 kind 字符统一归一
+  // kind：none / arrow（实心）/ open（开口）/ triangle（空心三角）/ dot（圆点）/ diamond（菱形）/ square（方块）/ bar（斜线）
+  function arrowKind(kind, flag) {
+    if (typeof kind === "string" && kind) return kind;
+    return flag ? "arrow" : "none";
+  }
+
+  // Visio 箭头尺寸级别 0~6 → 缩放系数（2 为默认/中等）
+  const ARROW_SIZE_SCALE = [0.55, 0.7, 1, 1.3, 1.6, 1.9, 2.2];
+  function arrowScale(level) {
+    if (typeof level !== "number" || !isFinite(level)) return 1;
+    return ARROW_SIZE_SCALE[Math.max(0, Math.min(6, Math.round(level)))];
+  }
+
+  // 各类型箭头字形（长 / 半宽，单位＝字形单位），取自 Visio SVG 导出里的 lendN 定义：
+  // 开口箭头 1×1、实心箭头 2×1、空心三角 3×1、斜线 1×1、圆点/方块 1.5、空心菱形 4.5×1.125。
+  // 统一按一个尺寸画会让开口箭头、圆点、方块明显偏大，三角形偏小
+  const ARROW_GLYPH = {
+    open: { len: 1, half: 1 },
+    arrow: { len: 2, half: 1 },
+    triangle: { len: 3, half: 1 },
+    bar: { len: 1, half: 1 },
+    dot: { len: 1.5, half: 0.75 },
+    square: { len: 1.5, half: 0.75 },
+    diamond: { len: 4.5, half: 1.125 },
+  };
+
+  // 在 tip 处按 from→tip 方向画箭头（局部坐标：+x 朝箭头尖，箭头体向 -x 延伸）
+  function drawArrow(c, from, tip, kind, lw, sizeLevel) {
+    if (!kind || kind === "none") return;
+    const dx = tip.x - from.x, dy = tip.y - from.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.001) return;
+    const ang = Math.atan2(dy, dx);
+    // 每字形单位 ≈ (线宽 + 2.5) px：线粗时箭头略大，但远不随线宽成比例膨胀
+    const u = (Math.max(0.5, lw) + 2.5) * arrowScale(sizeLevel);
+    const g = ARROW_GLYPH[kind] || ARROW_GLYPH.arrow;
+    const L = u * g.len, H = u * g.half;
+    const color = c.strokeStyle;
+    c.save();
+    c.translate(tip.x, tip.y);
+    c.rotate(ang);
+    c.lineWidth = Math.max(1.2, lw);
+    c.lineJoin = "miter";
+    c.lineCap = "butt";
+    if (kind === "dot") {
+      c.beginPath();
+      c.arc(0, 0, H, 0, Math.PI * 2);
+      c.fillStyle = color;
+      c.fill();
+    } else if (kind === "square") {
+      // Visio 类型 11：实心方块（以端点为心，随线段方向旋转）
+      c.beginPath();
+      c.rect(-H, -H, H * 2, H * 2);
+      c.fillStyle = color;
+      c.fill();
+    } else if (kind === "bar") {
+      // Visio 类型 9：45° 斜线，横跨线端
+      c.beginPath();
+      c.moveTo(H, -H);
+      c.lineTo(-H, H);
+      c.strokeStyle = color;
+      c.stroke();
+    } else if (kind === "diamond") {
+      // Visio 类型 22：空心菱形（只描边）
+      c.beginPath();
+      c.moveTo(0, 0);
+      c.lineTo(-L / 2, -H);
+      c.lineTo(-L, 0);
+      c.lineTo(-L / 2, H);
+      c.closePath();
+      c.strokeStyle = color;
+      c.stroke();
+    } else if (kind === "open") {
+      c.beginPath();
+      c.moveTo(-L, -H);
+      c.lineTo(0, 0);
+      c.lineTo(-L, H);
+      c.strokeStyle = color;
+      c.stroke();
+    } else {
+      c.beginPath();
+      c.moveTo(0, 0);
+      c.lineTo(-L, -H);
+      c.lineTo(-L, H);
+      c.closePath();
+      if (kind === "triangle") { c.strokeStyle = color; c.stroke(); }
+      else { c.fillStyle = color; c.fill(); }
+    }
+    c.restore();
+  }
+
+  // 图片适应（S3）：contain 等比内嵌 / cover 等比裁剪填满 / fill(stretch) 拉伸
+  function imageFitRect(sw, sh, iw, ih, mode) {
+    const m = mode === "cover" ? "cover" : (mode === "fill" || mode === "stretch") ? "fill" : "contain";
+    if (m === "fill") return { x: -sw / 2, y: -sh / 2, w: sw, h: sh };
+    const k = m === "cover" ? Math.max(sw / iw, sh / ih) : Math.min(sw / iw, sh / ih);
+    const w = iw * k, h = ih * k;
+    return { x: -w / 2, y: -h / 2, w, h };
+  }
+
+  // 图片形状：局部坐标（原点=中心），已由调用方完成平移/旋转/透明度
+  function drawImageContent(c, s, vp, st, opts) {
+    const asset = VX.Images ? VX.Images.asset(s.assetId) : null;
+    const img = asset ? VX.Images.imageOf(asset) : null;
+    const iw = (img && img.naturalWidth) || (asset && asset.w) || Math.max(1, s.w);
+    const ih = (img && img.naturalHeight) || (asset && asset.h) || Math.max(1, s.h);
+    const r = imageFitRect(s.w, s.h, iw, ih, s.fit);
+    const corner = Math.min(st.cornerRadius || 0, s.w / 2, s.h / 2);
+
+    c.save();
+    // cover / 圆角都需要裁剪到形状矩形，否则会画到框外
+    if (s.fit === "cover" || corner > 0.01) {
+      c.beginPath();
+      roundRectPath(c, -s.w / 2, -s.h / 2, s.w, s.h, corner);
+      c.clip();
+    }
+    if (img) {
+      c.drawImage(img, r.x, r.y, r.w, r.h);
+    } else {
+      // 解码完成前 / 资产缺失：画占位块，避免形状整个消失
+      c.fillStyle = "#eef1f5";
+      c.fillRect(-s.w / 2, -s.h / 2, s.w, s.h);
+      c.strokeStyle = "#c3cbd6";
+      c.lineWidth = 1 / (vp.zoom || 1);
+      c.beginPath();
+      c.moveTo(-s.w / 2, -s.h / 2); c.lineTo(s.w / 2, s.h / 2);
+      c.moveTo(s.w / 2, -s.h / 2); c.lineTo(-s.w / 2, s.h / 2);
+      c.stroke();
+    }
+    c.restore();
+
+    if (st.line && st.line !== "transparent" && (st.lineWidth || 0) > 0) {
+      c.strokeStyle = st.line;
+      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom, opts && opts.exported);
+      c.beginPath();
+      roundRectPath(c, -s.w / 2, -s.h / 2, s.w, s.h, corner);
+      c.stroke();
+    }
+  }
+
+  // opts: { editor:true, over(shape) → { visible, text, state, dx, dy, opacity } }（预览用）
+  function drawShape(c, s, vp, opts) {
+    const ov = (opts && opts.over) ? opts.over(s) : null;
+    if (ov && ov.visible === false) return;
+    const offX = (ov && ov.dx) || 0, offY = (ov && ov.dy) || 0;
+    const extraAlpha = (ov && ov.opacity != null) ? ov.opacity : 1;
+    const text = (ov && ov.text != null) ? ov.text : s.text;
+
+    c.save();
+    if (offX || offY) c.translate(offX, offY);
+
+    // 连接线：不走"中心平移+旋转"管线，按实时布线折线绘制
+    if (s.type === "connector") { drawConnector(c, s, text, opts); c.restore(); return; }
+
+    // 组合：递归绘制子形状（子形状为世界坐标；组不旋转——旋转在解组语义上作用于各子形状）
+    if (s.type === "group") {
+      for (const ch of s.children || []) drawShape(c, ch, vp, opts);
+      c.restore();
+      return;
+    }
+
+    // 动态面板：视口 + 当前状态；运行时支持状态切换过渡（fade / slide）
+    if (s.type === "panel") {
+      const z = vp.zoom || 1;
+      const editing = !!(opts && opts.editor && VX.state.panelEdit && VX.state.panelEdit.panelId === s.id);
+      if (opts && opts.editor) {
+        c.strokeStyle = editing ? "#2f6fed" : "#b9c2d0";
+        c.lineWidth = 1 / z;
+        c.setLineDash([6 / z, 4 / z]);
+        c.strokeRect(s.x + 0.5 / z, s.y + 0.5 / z, Math.max(1, s.w), Math.max(1, s.h));
+        c.setLineDash([]);
+        if (editing) {
+          const cur = VX.Model.panelStateById(s, VX.state.panelEdit.stateId) || VX.Model.panelState(s);
+          c.save();
+          c.fillStyle = "#2f6fed";
+          c.font = `${11 / z}px 'Segoe UI', Arial, sans-serif`;
+          c.textBaseline = "bottom";
+          c.fillText("状态编辑 · " + (cur ? cur.name : ""), s.x, s.y - 2 / z);
+          c.restore();
+        }
+      }
+      let activeState = null;
+      if (ov && ov.state) activeState = VX.Model.panelStateById(s, ov.state) || VX.Model.panelState(s);
+      else activeState = VX.Model.panelState(s);
+      const fx = ov && ov.panelFx;
+
+      const drawState = (stObj, alpha, shiftX, shiftY) => {
+        if (!stObj) return;
+        c.save();
+        if (shiftX || shiftY) c.translate(shiftX, shiftY);
+        let subOpts = opts;
+        if (alpha < 1) {
+          // 子形状各自设置 globalAlpha，只能经 over().opacity 叠加过渡透明度
+          subOpts = Object.assign({}, opts, {
+            over: (ch) => {
+              const base = opts.over ? opts.over(ch) : null;
+              return Object.assign({}, base || {}, {
+                opacity: (base && base.opacity != null ? base.opacity : 1) * alpha,
+              });
+            },
+          });
+        }
+        for (const ch of stObj.shapes || []) drawShape(c, ch, vp, subOpts);
+        c.restore();
+      };
+
+      const drawContent = () => {
+        if (!fx) { drawState(activeState, 1, 0, 0); return; }
+        const k = Math.max(0, Math.min(1, fx.progress || 0));
+        const from = VX.Model.panelStateById(s, fx.from);
+        const to = VX.Model.panelStateById(s, fx.to) || activeState;
+        if (fx.effect === "fade") {
+          drawState(from, 1 - k, 0, 0);
+          drawState(to, k, 0, 0);
+          return;
+        }
+        // 滑动：旧状态滑出，新状态从反方向滑入；两组都受视口裁剪
+        const w = Math.max(1, s.w), h = Math.max(1, s.h);
+        const dir = fx.dir || "left";
+        const sx = dir === "left" ? -w : dir === "right" ? w : 0;
+        const sy = dir === "up" ? -h : dir === "down" ? h : 0;
+        drawState(from, 1, sx * k, sy * k);
+        drawState(to, 1, -sx * (1 - k), -sy * (1 - k));
+      };
+
+      // 视口裁剪：编辑当前状态本身时放宽，方便调整溢出到框外的内容
+      const clip = !editing && VX.Model.panelClip(s);
+      if (clip) {
+        c.save();
+        c.beginPath();
+        c.rect(s.x, s.y, Math.max(1, s.w), Math.max(1, s.h));
+        c.clip();
+      }
+      drawContent();
+      if (clip) c.restore();
+      c.restore();
+      return;
+    }
+
+    // 组件实例（A3）：与组合一样递归绘制快照子形状（子形状是世界坐标）
+    if (s.type === "instance") {
+      for (const ch of s.children || []) drawShape(c, ch, vp, opts);
+      c.restore();
+      return;
+    }
+
+    // 中继器（A2）：按数据集重复绘制模板，文本做 {{列名}} 插值
+    if (s.type === "repeater") {
+      if (opts && opts.editor) {
+        c.strokeStyle = "#c7b8e8";
+        c.lineWidth = 1 / (vp.zoom || 1);
+        c.setLineDash([6 / (vp.zoom || 1), 4 / (vp.zoom || 1)]);
+        c.strokeRect(s.x, s.y, Math.max(1, s.w), Math.max(1, s.h));
+        c.setLineDash([]);
+      }
+      if (VX.Repeater) {
+        for (const it of VX.Repeater.items(s)) {
+          const inst = VX.Repeater.instantiate(s.repeater && s.repeater.template, it.row, s.x + it.dx, s.y + it.dy);
+          for (const t of inst) drawShape(c, t, vp, opts);
+        }
+      }
+      c.restore();
+      return;
+    }
+
+    const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+    c.translate(cx, cy);
+    if (s.angle) c.rotate(s.angle);
+    const hw = s.w / 2, hh = s.h / 2;
+    const st = s.style || {};
+    const baseAlpha = st.opacity != null ? st.opacity : 1;
+    c.globalAlpha = baseAlpha * extraAlpha;
+
+    if (s.type === "image") {
+      drawImageContent(c, s, vp, st, opts);
+      c.restore();
+      return;
+    }
+
+    // 填充 + 轮廓
+    const hasFill = st.fill && st.fill !== "transparent";
+    const hasLine = st.line && st.line !== "transparent" && (st.lineWidth || 0) > 0;
+    c.beginPath();
+    if (s.type === "ellipse") {
+      c.ellipse(0, 0, hw, hh, 0, 0, Math.PI * 2);
+    } else if (s.type === "path") {
+      // 子路径为局部坐标（原点=包围盒中心），按包围盒相对设计尺寸缩放
+      const subpaths = (s.path && s.path.subpaths) || [];
+      const ks = VX.Geometry.pathScale(s);
+      // 闭合与否由数据显式声明（`path.closed[i]`，由 reader 从 Visio 几何推导），
+      // 默认闭合：形状库多边形、布尔运算结果都是无填充的闭合环，
+      // 早先用「有填充或首尾重合」猜测会让透明填充的三角形/菱形缺一条闭合边
+      const closedFlags = (s.path && Array.isArray(s.path.closed)) ? s.path.closed : null;
+      for (let k = 0; k < subpaths.length; k++) {
+        const ring = subpaths[k];
+        if (!ring.length) continue;
+        for (let i = 0; i < ring.length; i++) {
+          if (i) c.lineTo(ring[i].x * ks.kx, ring[i].y * ks.ky); else c.moveTo(ring[i].x * ks.kx, ring[i].y * ks.ky);
+        }
+        // 开放折线（例：虚线引导线）不能闭合：闭合会凭空多出一条从终点回到起点的斜线
+        if (!closedFlags || closedFlags[k] !== false) c.closePath();
+      }
+    } else {
+      const r = Math.min(st.cornerRadius || 0, hw, hh);
+      roundRectPath(c, -hw, -hh, s.w, s.h, r);
+    }
+    if (hasFill) { c.fillStyle = st.fill; c.fill(s.type === "path" && s.path.fillRule === "nonzero" ? "nonzero" : "evenodd"); }
+    if (hasLine) {
+      c.strokeStyle = st.line;
+      c.lineWidth = strokeWidth(st.lineWidth, vp.zoom, opts && opts.exported);
+      const dashed = applyDash(c, st, c.lineWidth);
+      c.stroke();
+      if (dashed) c.setLineDash([]);
+    }
+
+    // 文本
+    if (text) {
+      const f = st.font || {};
+      c.fillStyle = f.color || "#333333";
+      c.font = fontString(f);
+      // 文本内边距：默认 4px，表格单元格等紧凑网格用 font.padding 加宽
+      const pad = f.padding != null ? f.padding : 4;
+      const lines = wrapText(text, s.w - pad * 2, (t) => c.measureText(t).width);
+      const lh = (f.size || 14) * 1.3;
+      const totalH = lines.length * lh;
+      let ty = f.vAlign === "middle" ? -totalH / 2 + lh / 2
+             : f.vAlign === "bottom" ? hh - pad - totalH + lh / 2
+             : -hh + pad + lh / 2;
+      c.textAlign = f.align === "center" ? "center" : f.align === "right" ? "right" : "left";
+      const tx = f.align === "center" ? 0 : f.align === "right" ? hw - pad : -hw + pad;
+      c.textBaseline = "middle";
+      for (const line of lines) { c.fillText(line, tx, ty); ty += lh; }
+      c.textAlign = "start";
+    }
+    c.restore();
+  }
+
+  // 形状层：世界坐标 → 视口变换
+  // 图层可见性在这里过滤（而不是在绘制分支里）：隐藏的层既不显示也不应被导出，
+  // 与 hit.selectable 的判定同源（锁定层仍然可见，只是不可选中）
+  function layerVisible(page, s) {
+    if (!s || !s.layer) return true;
+    const lay = (page.layers || []).find((l) => l.id === s.layer);
+    return !lay || lay.visible !== false;
+  }
+
+  function drawShapes(c, page, vp, opts) {
+    c.save();
+    c.translate(vp.ox, vp.oy);
+    c.scale(vp.zoom, vp.zoom);
+    const shapes = (page.shapes || []).filter((s) => layerVisible(page, s)).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
+    // 单个形状绘制出错不能中断整帧（否则它之后的所有形状/选择框一起消失）
+    for (const s of shapes) {
+      c.save();
+      try { drawShape(c, s, vp, opts); } catch (e) { console.error("draw shape failed:", s.id, s.type, e); }
+      c.restore();
+    }
+    c.restore();
+  }
+
+  // 连接点：形状四边中点（与 routing.anchorOf 的 0=上/1=右/2=下/3=左 一致）
+  // 显示时机：连接线工具激活（全部形状）/ 单选 / 悬停；吸附点高亮
+  function canConnect(s) {
+    return s && s.type !== "connector" && s.type !== "group" && s.type !== "instance" &&
+      s.type !== "repeater" && VX.Hit.selectable(s);
+  }
+
+  function drawConnectionPoints(c, vp) {
+    const st = VX.state;
+    if (st.editing) return;
+    const targets = [];
+    const seen = new Set();
+    const push = (s) => {
+      if (!canConnect(s) || seen.has(s.id)) return;
+      seen.add(s.id);
+      targets.push(s);
+    };
+    if (st.tool === "connector" || st.connEndDrag) {
+      const shapes = VX.Model.shapes();
+      for (let i = 0; i < shapes.length && targets.length < 200; i++) push(shapes[i]);
+    } else {
+      if (st.selection.length === 1) push(VX.Model.shape(st.selection[0]));
+      if (st.hoverShapeId) push(VX.Model.shape(st.hoverShapeId));
+    }
+    if (!targets.length) return;
+
+    const ha = st.hoverAnchor;
+    c.save();
+    for (const s of targets) {
+      for (let n = 0; n < 4; n++) {
+        const a = VX.Routing.anchorOf(s, n);
+        const p = vp.w2s(a.x, a.y);
+        const active = !!(ha && ha.id === s.id && ha.index === n);
+        const r = active ? 6 : 4;
+        c.beginPath();
+        c.arc(p.x, p.y, r, 0, Math.PI * 2);
+        c.fillStyle = active ? "#2f6fed" : "#ffffff";
+        c.fill();
+        c.lineWidth = active ? 2 : 1;
+        c.strokeStyle = "#2f6fed";
+        c.stroke();
+        // 十字标记：强调“可连接点”（Office 风格）
+        c.beginPath();
+        c.strokeStyle = active ? "#ffffff" : "#2f6fed";
+        c.lineWidth = 1;
+        c.moveTo(p.x - 2, p.y + 0.5); c.lineTo(p.x + 2, p.y + 0.5);
+        c.moveTo(p.x + 0.5, p.y - 2); c.lineTo(p.x + 0.5, p.y + 2);
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+
+  // 连接线端点手柄：悬停（未选中）时也显示，便于直接拖端点重新吸附
+  function drawConnectorEnds(c, vp) {
+    const st = VX.state;
+    if (st.editing) return;
+    const ids = [];
+    if (st.hoverShapeId && !st.selection.includes(st.hoverShapeId)) ids.push(st.hoverShapeId);
+    const hce = st.hoverConnEnd;
+    if (hce && !st.selection.includes(hce.id) && ids.indexOf(hce.id) < 0) ids.push(hce.id);
+    for (const id of ids) {
+      const s = VX.Model.shape(id);
+      if (!s || s.type !== "connector") continue;
+      const pts = VX.Routing.pointsOf(s);
+      if (!pts || pts.length < 2) continue;
+      const ends = [[pts[0], "begin"], [pts[pts.length - 1], "end"]];
+      for (const [p, which] of ends) {
+        const q = vp.w2s(p.x, p.y);
+        const active = !!(hce && hce.id === s.id && hce.which === which);
+        c.beginPath();
+        c.arc(q.x, q.y, active ? 6 : 4, 0, Math.PI * 2);
+        c.fillStyle = active ? "#2f6fed" : "#ffffff";
+        c.fill();
+        c.strokeStyle = "#2f6fed";
+        c.lineWidth = active ? 2 : 1;
+        c.stroke();
+      }
+    }
+  }
+
+  function drawPage(c, pg, vp, opts) {
+    const z = vp.zoom;
+    const p0 = vp.w2s(0, 0);
+    const pw = pg.size.w * z, ph = pg.size.h * z;
+
+    // 页面底色（页面设置里可改，默认白色）：编辑器里必画；导出时由调用方用 paintBg 决定——
+    // PNG 透明导出要留空（默认跟 exported 走），HTML/原型运行时必须铺上，
+    // 否则舞台那层灰（#e9ebee）会从页面里透出来，导出的页面看着就不是白的
+    const exported = !!(opts && opts.exported);
+    const paintBg = opts && opts.paintBg != null ? !!opts.paintBg : !exported;
+    if (paintBg) {
+      c.save();
+      // 投影只是编辑器里把页面从灰底里浮出来，导出不带：投影会在页面四边糊出一圈灰边
+      if (!exported) {
+        c.shadowColor = "rgba(0,0,0,0.15)";
+        c.shadowBlur = 12;
+        c.shadowOffsetY = 3;
+      }
+      c.fillStyle = pg.background || "#ffffff";
+      c.fillRect(p0.x, p0.y, pw, ph);
+      c.restore();
+    }
+
+    // 网格（页面内）：页面设置里可选 小网格 / 大网格 / 网点 / 无；预览与导出由 opts.grid 关闭
+    const showGrid = opts && opts.grid != null ? opts.grid : VX.state.grid;
+    if (showGrid) {
+      const kind = (opts && opts.gridKind) || VX.state.gridKind || "small";
+      const gs = VX.state.gridSize * z;
+      const gx = p0.x, gy = p0.y;
+      c.save();
+      c.beginPath();
+      c.rect(gx, gy, pw, ph);
+      c.clip();
+      if (kind === "dots") {
+        // 网点：每个交点一个 1px 点，收进同一条路径一次 fill（逐点 fillRect 在 1000+ 点时太慢）
+        c.fillStyle = "#d2d7de";
+        c.beginPath();
+        for (let x = gx; x <= gx + pw; x += gs) {
+          for (let y = gy; y <= gy + ph; y += gs) c.rect(Math.round(x), Math.round(y), 1, 1);
+        }
+        c.fill();
+      } else {
+        // 细线 / 主线分两次描边：大网格每 5 格加深一条（间距仍是 gridSize，吸附不变）
+        const strokeLines = (isMajor, color) => {
+          c.beginPath();
+          for (let i = 0, x = gx; x <= gx + pw; x += gs, i++) {
+            if (!!isMajor !== (kind === "large" && i % 5 === 0)) continue;
+            const px = Math.round(x) + 0.5;
+            c.moveTo(px, gy); c.lineTo(px, gy + ph);
+          }
+          for (let i = 0, y = gy; y <= gy + ph; y += gs, i++) {
+            if (!!isMajor !== (kind === "large" && i % 5 === 0)) continue;
+            const py = Math.round(y) + 0.5;
+            c.moveTo(gx, py); c.lineTo(gx + pw, py);
+          }
+          c.strokeStyle = color;
+          c.stroke();
+        };
+        c.lineWidth = 1;
+        strokeLines(false, "#f0f2f5");
+        if (kind === "large") strokeLines(true, "#dfe4ea");
+      }
+      c.restore();
+    }
+
+    // 页面边框：编辑器里靠它区分「页面」与「灰底」；导出产物不该带这圈浅灰框
+    if (!exported) {
+      c.strokeStyle = "#d0d4da";
+      c.lineWidth = 1;
+      c.strokeRect(p0.x + 0.5, p0.y + 0.5, pw - 1, ph - 1);
+    }
+  }
+
+  function draw(c) {
+    const vp = VX.Viewport;
+    const dpr = window.devicePixelRatio || 1;
+    const w = host ? host.clientWidth : canvas.clientWidth;
+    const h = host ? host.clientHeight : canvas.clientHeight;
+    // 尺寸防御：容器尺寸异常（布局未就绪/被内容反撑）时跳过本帧，避免背板像素爆炸导致渲染进程崩溃
+    if (w < 1 || h < 1 || w > 16384 || h > 16384) return;
+    // 同步 CSS 尺寸（canvas 为绝对定位，尺寸完全由此写入）
+    if (canvas.style.width !== w + "px") canvas.style.width = w + "px";
+    if (canvas.style.height !== h + "px") canvas.style.height = h + "px";
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    c.fillStyle = "#e9ebee";
+    c.fillRect(0, 0, w, h);
+
+    const pg = VX.Model.page();
+    if (!pg) return;
+    drawPage(c, pg, vp, { grid: VX.state.grid, gridKind: VX.state.gridKind });
+
+    // 形状（z 升序）：世界坐标 → 视口（缩放 + 平移）
+    drawShapes(c, pg, vp, { editor: true });
+
+    // 连接点（悬停 / 单选 / 连接线工具）
+    drawConnectionPoints(c, vp);
+    // 连接线端点手柄（悬停时）
+    drawConnectorEnds(c, vp);
+
+    // 瞬态对齐线（吸附反馈）
+    for (const line of VX.state.alignLines) {
+      const a = vp.w2s(line.dir === "v" ? line.pos : 0, line.dir === "h" ? line.pos : 0);
+      c.strokeStyle = "#e5484d";
+      c.lineWidth = 1;
+      c.beginPath();
+      if (line.dir === "v") { c.moveTo(a.x + 0.5, 0); c.lineTo(a.x + 0.5, h); }
+      else { c.moveTo(0, a.y + 0.5); c.lineTo(w, a.y + 0.5); }
+      c.stroke();
+    }
+
+    // 框选矩形
+    if (VX.state.marquee) {
+      const m = VX.state.marquee;
+      const p1 = vp.w2s(Math.min(m.x1, m.x2), Math.min(m.y1, m.y2));
+      const p2 = vp.w2s(Math.max(m.x1, m.x2), Math.max(m.y1, m.y2));
+      c.fillStyle = "rgba(47,111,237,0.08)";
+      c.fillRect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+      c.strokeStyle = "#2f6fed";
+      c.lineWidth = 1;
+      c.strokeRect(p1.x + 0.5, p1.y + 0.5, p2.x - p1.x - 1, p2.y - p1.y - 1);
+    }
+
+    // 参考线 + 选择覆盖层
+    VX.Overlay.drawGuides(c, vp, pg, w, h);
+    VX.Overlay.drawSelection(c, vp);
+
+    // 连接线拖拽预览（虚线）
+    if (VX.state.rubberConn) {
+      const rc = VX.state.rubberConn;
+      c.save();
+      c.beginPath();
+      c.moveTo(rc.begin.x, rc.begin.y);
+      c.lineTo(rc.cur.x, rc.cur.y);
+      c.strokeStyle = "#2f6fed";
+      c.lineWidth = 1.5;
+      c.setLineDash([5, 4]);
+      c.stroke();
+      c.restore();
+    }
+  }
+
+  const Renderer = {
+    attach(el) {
+      canvas = el;
+      host = el.parentElement;
+      ctx = canvas.getContext("2d");
+    },
+    invalidate() { VX.state.dirty = true; },
+    start() {
+      const tick = () => {
+        try {
+          if (VX.state.dirty) {
+            VX.state.dirty = false;
+            draw(ctx);
+            VX.Overlay.drawRulers();
+          }
+        } catch (e) {
+          console.error("render error:", e);
+          if (window.__tauricpp__) window.__tauricpp__.invoke("log_error", { message: "render: " + e.message + " @ " + (e.stack || "").split("\n")[1] });
+          VX.state.dirty = false;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    },
+    wrapText,   // 供文本就地编辑测量复用
+    imageFitRect,  // 导出 SVG 复用同一套图片适应计算
+
+    // 预览/导出共用：把一页（可带交互覆盖）画到指定 2D 上下文
+    // opts: { zoom, ox, oy, grid, over(shape), exported }
+    drawScene(c, page, opts) {
+      const vp = {
+        zoom: opts.zoom, ox: opts.ox, oy: opts.oy,
+        w2s(x, y) { return { x: x * this.zoom + this.ox, y: y * this.zoom + this.oy }; },
+      };
+      drawPage(c, page, vp, opts);
+      drawShapes(c, page, vp, opts);
+    },
+  };
+
+  VX.Renderer = Renderer;
+})();
+
+</script>
+<script>
+// interact.js —— Axure 式交互运行时（P4）
+// 预览（F5）与后续 HTML 导出共用：事件 → 动作、三级变量作用域、动态面板状态、动效
+"use strict";
+
+(function () {
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // 递归查找形状（含组合、面板各状态）
+  function findShape(arr, id) {
+    for (const s of arr || []) {
+      if (s.id === id) return s;
+      if (s.type === "group" || s.type === "instance") {
+        const f = findShape(s.children, id);
+        if (f) return f;
+      }
+      if (s.type === "panel") {
+        for (const st of (s.panel && s.panel.states) || []) {
+          const f = findShape(st.shapes, id);
+          if (f) return f;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 遍历页面形状树。传 stateOf(shape) 时动态面板只遍历当前激活状态（页面载入/键盘事件），
+  // 不传则遍历全部状态（查找形状、兼容旧调用）
+  function walk(arr, fn, stateOf) {
+    for (const s of arr || []) {
+      fn(s);
+      if (s.type === "group" || s.type === "instance") walk(s.children, fn, stateOf);
+      if (s.type === "panel") {
+        const states = (s.panel && s.panel.states) || [];
+        const sid = stateOf ? stateOf(s) : null;
+        const one = sid ? states.find((x) => x.id === sid) : null;
+        for (const st of (one ? [one] : states)) walk(st.shapes, fn, stateOf);
+      }
+    }
+  }
+
+  function create(srcDoc) {
+    const doc = clone(srcDoc);
+    // 与编辑器 Model.load 同口径：旧文件/手写 JSON 的面板在运行时也要补齐 states/active/clip
+    if (VX.Model && VX.Model.normalizePanel) {
+      for (const p of doc.pages || []) walk(p.shapes, (s) => VX.Model.normalizePanel(s, false));
+    }
+    const vars = { global: {}, page: {}, local: {} };
+    const overrides = new Map();   // shapeId → { visible,text,state,dx,dy,opacity,panelFx }
+    const anims = [];
+    let pageId = doc.pages && doc.pages[0] ? doc.pages[0].id : null;
+    let eventDepth = 0;            // OnStateChange → setState 递归保护
+
+    const byId = (id) => (doc.pages || []).find((p) => p.id === id) || null;
+    const page = () => byId(pageId);
+    const ov = (id) => {
+      let o = overrides.get(id);
+      if (!o) { o = {}; overrides.set(id, o); }
+      return o;
+    };
+
+    // 中继器动作的目标解析：只认 repeater 形状（普通形状不响应这些动作）
+    function repeaterOf(id) {
+      const s = findShape((page() || {}).shapes, id);
+      return s && s.type === "repeater" ? s : null;
+    }
+    function relayoutRepeater(s) { if (VX.Repeater) VX.Repeater.relayout(s); }
+
+    function applyDefaults(list, target) {
+      for (const v of list || []) {
+        if (v && v.name) target[v.name] = v.default != null ? v.default : "";
+      }
+    }
+
+    // {{var}} 插值：local → page → global
+    function interpolate(text) {
+      if (typeof text !== "string") return text == null ? "" : String(text);
+      return text.replace(/\{\{\s*([\w.\-]+)\s*\}\}/g, (m, name) => {
+        if (vars.local[name] != null) return String(vars.local[name]);
+        if (vars.page[name] != null) return String(vars.page[name]);
+        if (vars.global[name] != null) return String(vars.global[name]);
+        return m;
+      });
+    }
+
+    function displayText(shape) {
+      const o = overrides.get(shape.id);
+      const raw = o && o.text != null ? o.text : shape.text;
+      return raw != null ? interpolate(raw) : "";
+    }
+
+    function over(shape) {
+      const o = overrides.get(shape.id) || {};
+      const hasText = shape.text != null || o.text != null;
+      return {
+        visible: o.visible,
+        text: hasText ? displayText(shape) : null,
+        state: o.state,
+        dx: o.dx,
+        dy: o.dy,
+        opacity: o.opacity,
+        panelFx: o.panelFx,
+      };
+    }
+
+    // 遍历可见形状树时取面板的当前状态（运行时覆盖优先，设计态 active 兜底）
+    const activeStateOf = (s) => {
+      const o = overrides.get(s.id);
+      const st = (o && o.state && VX.Model.panelStateById(s, o.state)) || VX.Model.panelState(s);
+      return st ? st.id : null;
+    };
+
+    function animate(o, prop, from, to, dur, done) {
+      anims.push({ o, prop, from, to, dur: Math.max(1, dur), t: 0, done });
+    }
+
+    function tick(dt) {
+      let active = false;
+      for (let i = anims.length - 1; i >= 0; i--) {
+        const a = anims[i];
+        a.t += dt;
+        const k = Math.min(1, a.t / a.dur);
+        a.o[a.prop] = a.from + (a.to - a.from) * k;
+        if (k >= 1) {
+          anims.splice(i, 1);
+          if (a.done) a.done();
+        }
+        active = true;
+      }
+      return active;
+    }
+
+    function runAction(a, shape) {
+      if (!a || !a.type) return;
+      switch (a.type) {
+        case "openLink": {
+          if (a.url) { window.open(a.url, "_blank"); return; }
+          if (a.target) goPage(a.target);
+          return;
+        }
+        case "show":
+        case "hide": {
+          const ids = String(a.target || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const id of ids) {
+            const o = ov(id);
+            if (a.type === "hide") {
+              if (a.effect === "fade") {
+                animate(o, "opacity", o.opacity == null ? 1 : o.opacity, 0, 220, () => { o.visible = false; o.opacity = 1; });
+              } else {
+                o.visible = false;
+              }
+            } else {
+              o.visible = true;
+              if (a.effect === "fade") {
+                o.opacity = 0;
+                animate(o, "opacity", 0, 1, 220);
+              } else {
+                o.opacity = 1;
+              }
+            }
+          }
+          return;
+        }
+        case "setState": {
+          const panel = findShape((page() || {}).shapes, a.target);
+          if (!panel || panel.type !== "panel") return;
+          const states = (panel.panel && panel.panel.states) || [];
+          if (!states.length) return;
+          const o = ov(panel.id);
+          const curSt = (o.state && VX.Model.panelStateById(panel, o.state)) ||
+                        VX.Model.panelState(panel) || states[0];
+          const cur = curSt.id;
+          const i = Math.max(0, states.findIndex((x) => x.id === cur));
+          const key = String(a.state == null ? "" : a.state).trim();
+          let to = states[0];   // 旧文件里空的 state 依旧表示「第一个状态」
+          if (key === "next") to = states[Math.min(i + 1, states.length - 1)];
+          else if (key === "prev") to = states[Math.max(i - 1, 0)];
+          else if (key === "cycle") to = states[(i + 1) % states.length];
+          else if (key) to = states.find((x) => x.id === key || x.name === key) || states[0];
+
+          const effect = (a.effect === "fade" || a.effect === "slide") ? a.effect : "none";
+          const dur = Math.max(1, Number(a.duration) || 300);
+          // 同面板连续切换：撤掉上一段过渡，避免它的收尾回调删掉新过渡
+          if (o.panelFx) {
+            for (let k = anims.length - 1; k >= 0; k--) if (anims[k].o === o.panelFx) anims.splice(k, 1);
+          }
+          o.state = to.id;
+          if (effect === "none" || to.id === cur) {
+            delete o.panelFx;
+          } else {
+            const fx = {
+              from: cur, to: to.id, effect,
+              dir: ["left", "right", "up", "down"].indexOf(a.direction) >= 0 ? a.direction : "left",
+              progress: 0,
+            };
+            o.panelFx = fx;
+            animate(fx, "progress", 0, 1, dur, () => { if (o.panelFx === fx) delete o.panelFx; });
+          }
+          // OnStateChange 事件（可用 {{panelStateName}} 等局部变量）
+          const fromSt = states.find((x) => x.id === cur);
+          vars.local.panelState = to.id;
+          vars.local.panelStateName = to.name || "";
+          vars.local.panelStateFrom = cur;
+          vars.local.panelStateFromName = fromSt ? (fromSt.name || "") : "";
+          dispatch(panel, "statechange");
+          return;
+        }
+        case "setText": {
+          if (a.target) ov(a.target).text = interpolate(a.value != null ? String(a.value) : "");
+          return;
+        }
+        case "setVar": {
+          const scope = vars[a.scope] ? a.scope : "global";
+          vars[scope][a.name] = interpolate(a.value != null ? String(a.value) : "");
+          return;
+        }
+        case "move": {
+          if (!a.target) return;
+          const o = ov(a.target);
+          const fx = o.dx || 0, fy = o.dy || 0;
+          const ddx = Number(a.dx) || 0, ddy = Number(a.dy) || 0;
+          if (a.animate) {
+            animate(o, "dx", fx, fx + ddx, a.animate);
+            animate(o, "dy", fy, fy + ddy, a.animate);
+          } else {
+            o.dx = fx + ddx;
+            o.dy = fy + ddy;
+          }
+          return;
+        }
+        case "runScript": {
+          try {
+            // 预览沙箱：仅传入 shape/page/vars
+            new Function("shape", "page", "vars", a.code || "")(shape, page(), vars);
+          } catch (e) {
+            console.warn("runScript 失败:", e);
+          }
+          return;
+        }
+        // ---------- 中继器（A2）：数据集增删 / 过滤 / 排序 / 翻页 ----------
+        case "repAddRow": {
+          const r = repeaterOf(a.target);
+          if (!r) return;
+          const rep = r.repeater || (r.repeater = { dataset: [], columns: [], template: [] });
+          if (!Array.isArray(rep.dataset)) rep.dataset = [];
+          let row = {};
+          if (a.row) {
+            try {
+              const parsed = JSON.parse(interpolate(String(a.row)));
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) row = parsed;
+            } catch (e) {
+              console.warn("repAddRow 的行数据不是合法 JSON：", a.row);
+            }
+          }
+          rep.dataset.push(row);
+          relayoutRepeater(r);
+          return;
+        }
+        case "repDelRow": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater || !Array.isArray(r.repeater.dataset)) return;
+          const ds = r.repeater.dataset;
+          // index 从 1 开始；留空/0 表示删除最后一行
+          const n = Number(a.index) || 0;
+          const i = n > 0 ? n - 1 : ds.length - 1;
+          if (i >= 0 && i < ds.length) ds.splice(i, 1);
+          relayoutRepeater(r);
+          return;
+        }
+        case "repFilter": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          rep.view.page = 0;
+          // 列名留空 = 清除过滤
+          rep.view.filter = a.column
+            ? { column: String(a.column), op: a.op || "contains",
+                value: interpolate(a.value != null ? String(a.value) : "") }
+            : null;
+          return;
+        }
+        case "repSort": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          rep.view.page = 0;
+          // 列名留空 = 清除排序
+          rep.view.sort = a.column ? { column: String(a.column), dir: a.dir === "desc" ? "desc" : "asc" } : null;
+          return;
+        }
+        case "repPage": {
+          const r = repeaterOf(a.target);
+          if (!r || !r.repeater || !VX.Repeater) return;
+          const rep = r.repeater;
+          rep.view = rep.view || {};
+          const last = Math.max(0, VX.Repeater.visibleRows(rep).pageCount - 1);
+          const cur = Math.min(Math.max(0, Number(rep.view.page) || 0), last);
+          const p = String(a.page == null || a.page === "" ? "next" : a.page).trim().toLowerCase();
+          let next = cur;
+          if (p === "next") next = Math.min(last, cur + 1);
+          else if (p === "prev") next = Math.max(0, cur - 1);
+          else if (p === "first" || p === "reset") next = 0;
+          else if (p === "last") next = last;
+          else next = Math.min(last, Math.max(0, (Number(p) || 1) - 1)); // 数字按 1 基页码
+          rep.view.page = next;
+          return;
+        }
+        default:
+          return;
+      }
+    }
+
+    // 局部变量在「一次顶层事件」内共享（含它派发的 OnStateChange），由 dispatch 统一开合
+    function runActions(list, shape) {
+      for (const a of list || []) runAction(a, shape);
+    }
+
+    // P5：元素级脚本（meta.scripts）在同一事件触发时执行，沙箱同 runScript
+    function runScripts(shape, event) {
+      const list = (shape.meta && shape.meta.scripts) || [];
+      for (const sc of list) {
+        if (!sc || !sc.code) continue;
+        if ((sc.event || "click") !== event) continue;
+        try {
+          new Function("shape", "page", "vars", sc.code)(shape, page(), vars);
+        } catch (e) {
+          console.warn("元素脚本失败:", e);
+        }
+      }
+    }
+
+    function runPageLoad() {
+      const p = page();
+      if (!p) return;
+      // 只派发当前可见状态：非激活状态里的形状不该收到页面载入事件
+      walk(p.shapes, (s) => dispatch(s, "pageload"), activeStateOf);
+    }
+
+    function goPage(id) {
+      const p = byId(id);
+      if (!p) return false;
+      pageId = id;
+      vars.page = {};
+      applyDefaults(p.variables, vars.page);
+      overrides.clear();
+      anims.length = 0;
+      runPageLoad();
+      return true;
+    }
+
+    function dispatch(shape, event) {
+      if (!shape || eventDepth > 6) return;   // OnStateChange 里再切状态的递归保护
+      const top = eventDepth === 0;
+      if (top) vars.local = {};
+      eventDepth++;
+      try {
+        const list = (shape.interactions || []).filter((i) => (i.event || "click") === event);
+        for (const it of list) runActions(it.actions, shape);
+        runScripts(shape, event);
+      } finally {
+        eventDepth--;
+        if (top) vars.local = {};
+      }
+    }
+
+    function init() {
+      vars.global = {};
+      applyDefaults(doc.doc && doc.doc.variables, vars.global);
+      const p = page();
+      vars.page = {};
+      if (p) applyDefaults(p.variables, vars.page);
+      runPageLoad();
+    }
+
+    return {
+      doc, vars, overrides, page, pageId: () => pageId, goPage, dispatch, over,
+      displayText, interpolate, tick, init,
+      walk: (arr, fn) => walk(arr, fn, activeStateOf),
+      findShape: (id) => findShape((page() || {}).shapes, id),
+    };
+  }
+
+  VX.Interact = { create, walk };
+})();
+
+</script>
+<script>
+(function () {
+  "use strict";
+  var docData = JSON.parse(document.getElementById("vx-doc").textContent);
+  // 渲染器取页面/面板状态都走 VX.Model，这里把文档灌进模型并把它的对象树交给交互运行时，
+  // 保证「渲染看到的形状」与「交互改写的形状」是同一批对象
+  VX.Model.doc.pages = docData.pages;
+  VX.Model.doc.doc = docData.doc || VX.Model.doc.doc;
+  // 图片资产与组件母版：渲染中继器/图片时要查 doc.assets，A3 实例的母版信息也在这里
+  VX.Model.doc.assets = docData.assets || [];
+  VX.Model.doc.library = docData.library || [];
+  var rt = VX.Interact.create(docData);
+  VX.Model.doc.pages = rt.doc.pages;
+  VX.Model.doc.doc = rt.doc.doc;
+  VX.Model.doc.assets = rt.doc.assets || VX.Model.doc.assets;
+  VX.Model.doc.library = rt.doc.library || VX.Model.doc.library;
+
+  var view = { zoom: 1, ox: 0, oy: 0 };
+  var canvas = document.getElementById("vx-canvas");
+  var stage = document.getElementById("vx-stage");
+  var c = canvas.getContext("2d");
+  var hoverId = null, dirty = true, raf = 0, lastT = 0;
+
+  // 图片资产解码是异步的：解码完成后标脏重绘，否则导出页首帧只剩灰底占位块
+  (docData.assets || []).forEach(function (a) {
+    if (!a || !a.dataUrl) return;
+    var im = new Image();
+    im.onload = function () { dirty = true; };
+    im.src = a.dataUrl;
+  });
+
+  function pageName() { var p = rt.page(); return p ? p.name : ""; }
+
+  // 左侧页面树折叠：只记在本次会话里（file:// 下 localStorage 常被禁止，不做持久化）
+  var appEl = document.getElementById("vx-app");
+  function setSideCollapsed(on) {
+    appEl.classList.toggle("side-collapsed", !!on);
+    fit();   // 侧栏宽度变了，舞台重新等比适配
+  }
+  document.getElementById("vx-side-toggle").addEventListener("click", function () {
+    setSideCollapsed(!appEl.classList.contains("side-collapsed"));
+  });
+
+  // 页面等比铺满舞台：与 preview.js 的 fit 同一套算法（上限 2x，留 48px 边距）
+  function fit() {
+    var p = rt.page();
+    if (!p) return;
+    // 渲染器/命中测试里的连接线走 VX.Model.shape → VX.Model.page()，而导出运行时是直接
+    // 给 VX.Model.doc.pages 赋值（没走 load），VX.Model 的当前页指针仍是 null。
+    // 这里把它同步到当前活动页，否则连接器一命中就抛「reading 'shapes'」
+    VX.Model.setCurrentPage(p.id);
+    var availW = Math.max(80, stage.clientWidth - 48);
+    var availH = Math.max(80, stage.clientHeight - 48);
+    var z = Math.min(availW / p.size.w, availH / p.size.h, 2);
+    view.zoom = Math.max(0.05, z);
+    var cssW = Math.round(p.size.w * view.zoom), cssH = Math.round(p.size.h * view.zoom);
+    var dpr = window.devicePixelRatio || 1;
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    view.ox = view.oy = 0;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 先铺一层页面底色：canvas 尺寸是四舍五入后的整数，行尾/行底可能差半像素，
+    // 留白要与页面同色（早先铺的是舞台灰 #e9ebee，那半像素加上未画底色的页面，整页都发灰）
+    c.fillStyle = p.background || "#FFFFFF";
+    c.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    dirty = true;
+    layoutPages();
+    document.getElementById("vx-page-title").textContent = pageName();
+  }
+
+  // 左侧页面树：点击切页（交互里的「打开链接/跳转页面」也走同一套 goPage）
+  function layoutPages() {
+    var box = document.getElementById("vx-pages");
+    box.innerHTML = "";
+    (rt.doc.pages || []).forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "vx-page" + (p.id === rt.pageId() ? " active" : "");
+      b.title = p.name;
+      var ico = document.createElement("span");
+      ico.className = "vx-page-ico";
+      var name = document.createElement("span");
+      name.className = "vx-page-name";
+      name.textContent = p.name;
+      b.appendChild(ico);
+      b.appendChild(name);
+      b.onclick = function () { if (rt.goPage(p.id)) { fit(); } };
+      box.appendChild(b);
+    });
+  }
+
+  function render() {
+    var p = rt.page();
+    if (!p) return;
+    var dpr = window.devicePixelRatio || 1;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = p.background || "#FFFFFF";
+    c.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    VX.Renderer.drawScene(c, p, {
+      zoom: view.zoom, ox: view.ox, oy: view.oy, grid: false, exported: true,
+      // exported 默认不画页面底色（PNG 透明导出要留空），原型演出必须画：否则页面是透明/灰的
+      paintBg: true,
+      over: function (s) { return rt.over(s); },
+    });
+  }
+
+  function frame(t) {
+    var dt = lastT ? Math.min(64, t - lastT) : 16;
+    lastT = t;
+    var active = rt.tick(dt);
+    if (dirty || active) { render(); dirty = false; }
+    raf = requestAnimationFrame(frame);
+  }
+
+  function worldAt(e) {
+    var r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / view.zoom, y: (e.clientY - r.top) / view.zoom };
+  }
+  function hitAt(w) {
+    var p = rt.page();
+    if (!p) return null;
+    return VX.Hit.inPage(p.shapes, w.x, w.y, { over: function (s) { return rt.over(s); } });
+  }
+  // 交互派发后：重绘 + 刷新顶栏（标题/标签高亮），页面若切换且尺寸不同则重新适配。
+  // 只看 dirty 重绘会让画布跳到新页但顶栏仍停旧页——预览的 afterDispatch 就是干这个的
+  function after() {
+    dirty = true;
+    VX.Model.setCurrentPage(rt.pageId());
+    document.getElementById("vx-page-title").textContent = pageName();
+    layoutPages();
+    var p = rt.page();
+    if (p && Math.abs(p.size.w * view.zoom - canvas.clientWidth) > 1) fit();
+  }
+
+  canvas.addEventListener("click", function (e) {
+    var s = hitAt(worldAt(e));
+    if (!s) return;
+    rt.dispatch(s, "click");
+    after();
+  });
+  canvas.addEventListener("dblclick", function (e) {
+    var s = hitAt(worldAt(e));
+    if (!s) return;
+    rt.dispatch(s, "dblclick");
+    after();
+  });
+  canvas.addEventListener("mousemove", function (e) {
+    var s = hitAt(worldAt(e));
+    var id = s ? s.id : null;
+    if (id !== hoverId) {
+      if (hoverId) { var prev = rt.findShape(hoverId); if (prev) rt.dispatch(prev, "mouseleave"); }
+      hoverId = id;
+      if (s) rt.dispatch(s, "mouseenter");
+      canvas.style.cursor = s ? "pointer" : "";
+      after();
+    }
+  });
+  canvas.addEventListener("mouseleave", function () {
+    if (hoverId) {
+      var prev = rt.findShape(hoverId);
+      if (prev) rt.dispatch(prev, "mouseleave");
+      hoverId = null;
+      after();
+    }
+  });
+  // 键盘事件：派发给配置了 keydown 交互的形状（与 preview.js 同口径）
+  window.addEventListener("keydown", function (e) {
+    var p = rt.page();
+    if (!p) return;
+    var touched = false;
+    rt.walk(p.shapes, function (s) {
+      if ((s.interactions || []).some(function (i) { return i.event === "keydown"; })) {
+        rt.dispatch(s, "keydown");
+        touched = true;
+      }
+    });
+    if (touched) after();
+  });
+
+  document.getElementById("vx-title").textContent =
+    (docData.doc && docData.doc.name) || document.title || "原型";
+  rt.init();
+  fit();
+  new ResizeObserver(fit).observe(stage);
+  raf = requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

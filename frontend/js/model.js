@@ -1,6 +1,5 @@
-// model.js —— 文档模型（P1）
-// 结构对齐 CODEPLAN.md §3 JSON Schema；P1 支持 fixed 页面尺寸 / 矩形·椭圆·文本 / 参考线
-// 其余字段（image/path/panel/repeater/meta/interactions）在后续里程碑扩展
+// model.js —— 文档模型
+// 结构对齐 CODEPLAN.md §3 JSON Schema；形状、页面、交互、动态面板状态等字段都在此定义与归一化
 "use strict";
 
 window.VX = window.VX || {};
@@ -124,6 +123,77 @@ window.VX = window.VX || {};
     if (s && s.type === "path" && s.path && !s.path.design) s.path.design = { w: s.w, h: s.h };
   }
 
+  // ---- 动态面板：数据契约与树操作 ----
+  // shape.name = 面板名（状态编辑页签标题）；panel = { states, active, clip }
+  // 状态里的子形状用世界坐标，面板本身是「视口」：移动时整体平移，改尺寸只改视口。
+  function defaultPanel() {
+    return { states: [{ id: "st1", name: "状态 1", shapes: [] }], active: "st1", clip: true };
+  }
+
+  // 新建面板的显示名：按文档里已用过的名字递增，避免「动态面板 1」重名
+  function nextPanelName() {
+    const used = new Set();
+    const walk = (arr) => {
+      for (const s of arr || []) {
+        if (s.type === "panel" && s.name) used.add(s.name);
+        walk(s.children);
+        for (const st of (s.panel && s.panel.states) || []) walk(st.shapes);
+        for (const t of (s.repeater && s.repeater.template) || []) walk(t);
+      }
+    };
+    for (const p of doc.pages || []) walk(p.shapes);
+    let n = 1;
+    while (used.has("动态面板 " + n)) n++;
+    return "动态面板 " + n;
+  }
+
+  // 所有入口（新建 / 载入 / VSDX 读回）都过这一层：旧文件可能缺 states、active、
+  // 状态 id、shapes，甚至还是 P4 之前的 {action,targets} 旧 schema。
+  // defaultClip=false 用于「载入旧文档」：旧文件本来不裁剪，强行开启会让坐标漂移到
+  // 视口外的内容（历史版本移动面板不带动子形状留下的）突然全部消失。
+  function normalizePanel(s, defaultClip) {
+    if (!s || s.type !== "panel") return;
+    // 先记下原文件是否显式声明过 clip：整段重建（旧 schema）时 defaultPanel 的 true 不能盖过它
+    const raw = s.panel;
+    const declaredClip = raw && typeof raw === "object" && !Array.isArray(raw) && typeof raw.clip === "boolean"
+      ? raw.clip : null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.states)) {
+      s.panel = defaultPanel();
+    }
+    const p = s.panel;
+    p.states = p.states.filter((st) => st && typeof st === "object");
+    if (!p.states.length) p.states = [{ id: "st1", name: "状态 1", shapes: [] }];
+    const used = new Set();
+    p.states.forEach((st, i) => {
+      if (!st.id || used.has(st.id)) {
+        let id = "st" + (i + 1) + "_" + i;
+        let n = 1;
+        while (used.has(id)) id = "st" + (i + 1) + "_" + (n++);
+        st.id = id;
+      }
+      used.add(st.id);
+      if (!st.name) st.name = "状态 " + (i + 1);
+      if (!Array.isArray(st.shapes)) st.shapes = [];
+    });
+    if (!p.states.some((st) => st.id === p.active)) p.active = p.states[0].id;
+    p.clip = declaredClip === null ? (defaultClip !== false) : declaredClip;
+    if (!s.name) s.name = nextPanelName();
+  }
+
+  // 平移整棵子树：容器子形状（含连接线端点/折点、嵌套面板、中继器模板）都要跟着走
+  function translateShapeTree(s, dx, dy) {
+    if (!s) return;
+    s.x = (s.x || 0) + dx;
+    s.y = (s.y || 0) + dy;
+    if (s.type === "connector") {
+      for (const k of ["begin", "end"]) if (s[k]) { s[k].x += dx; s[k].y += dy; }
+      for (const p of s.points || []) { p.x += dx; p.y += dy; }
+    }
+    for (const ch of s.children || []) translateShapeTree(ch, dx, dy);
+    for (const st of (s.panel && s.panel.states) || []) for (const ch of st.shapes || []) translateShapeTree(ch, dx, dy);
+    for (const t of (s.repeater && s.repeater.template) || []) translateShapeTree(t, dx, dy);
+  }
+
   const Model = {
     doc,
     state,
@@ -149,6 +219,8 @@ window.VX = window.VX || {};
         applyPageGrid(this.page(id));   // 网格样式是每页的设置
         state.selection = [];
         state.selGuides = [];
+        state.panelEdit = null;  // 状态编辑上下文属于某一页，换页后必须失效
+        state.enterGroup = null;
         state.dirty = true;
         emit("pagechange");
       }
@@ -265,19 +337,15 @@ window.VX = window.VX || {};
       return m;
     },
 
-    // ---- 动态面板（P4）----
-    panelStates(s) {
-      return (s && s.type === "panel" && s.panel && Array.isArray(s.panel.states)) ? s.panel.states : [];
-    },
+    // ---- 动态面板 ----
+    normalizePanel,
+    panelStates(s) { return (s && s.type === "panel" && s.panel && Array.isArray(s.panel.states)) ? s.panel.states : []; },
     panelStateById(panel, id) { return this.panelStates(panel).find((x) => x.id === id) || null; },
     panelState(panel) {
       const st = this.panelStates(panel);
       if (!st.length) return null;
-      if (panel.panel.active) {
-        const hit = st.find((x) => x.id === panel.panel.active);
-        if (hit) return hit;
-      }
-      return st[0];
+      const hit = st.find((x) => x.id === (panel.panel && panel.panel.active));
+      return hit || st[0];
     },
     activePanelShapes(panel) {
       const st = this.panelState(panel);
@@ -285,30 +353,99 @@ window.VX = window.VX || {};
       if (!Array.isArray(st.shapes)) st.shapes = [];
       return st.shapes;
     },
-    addPanelState(panel, name) {
-      if (!panel.panel) panel.panel = { states: [] };
-      const n = panel.panel.states.length + 1;
-      const st = { id: "st" + Date.now().toString(36) + n, name: name || ("状态 " + n), shapes: [] };
-      panel.panel.states.push(st);
-      panel.panel.active = st.id;
+    // 缺省裁剪（视口语义）；显式 clip:false 才让内容溢出显示
+    panelClip(s) { return !!(s && s.type === "panel" && (!s.panel || s.panel.clip !== false)); },
+    // 状态编辑页签标题：面板名（旧文件没有 name 时用 id 兜底）
+    panelName(s) { return (s && (s.name || (s.type === "panel" ? "动态面板 " + s.id : s.id))) || "动态面板"; },
+    addPanelState(panel, name, copyFromId) {
+      normalizePanel(panel);
+      const p = panel.panel;
+      const src = copyFromId ? this.panelStateById(panel, copyFromId) : null;
+      let shapes = [];
+      if (src) {
+        shapes = JSON.parse(JSON.stringify(src.shapes || []));
+        const reid = (x) => {
+          x.id = this.nextId();
+          for (const c of x.children || []) reid(c);
+          for (const st of (x.panel && x.panel.states) || []) for (const c of st.shapes || []) reid(c);
+          for (const t of (x.repeater && x.repeater.template) || []) reid(t);
+        };
+        shapes.forEach(reid);
+      }
+      const st = { id: "st" + Date.now().toString(36) + "_" + (p.states.length + 1),
+                   name: name || ("状态 " + (p.states.length + 1)), shapes };
+      p.states.push(st);
+      p.active = st.id;
       state.dirty = true;
       emit("change");
       return st;
     },
     removePanelState(panel, id) {
-      if (!panel.panel || !Array.isArray(panel.panel.states)) return;
-      panel.panel.states = panel.panel.states.filter((x) => x.id !== id);
-      if (!panel.panel.states.length) panel.panel.states.push({ id: "st1", name: "状态 1", shapes: [] });
-      if (panel.panel.active === id) panel.panel.active = panel.panel.states[0].id;
+      normalizePanel(panel);
+      const p = panel.panel;
+      if (p.states.length <= 1) return false;   // 至少保留一个状态
+      const i = p.states.findIndex((x) => x.id === id);
+      if (i < 0) return false;
+      p.states.splice(i, 1);
+      if (p.active === id) p.active = p.states[Math.min(i, p.states.length - 1)].id;
+      const pe = state.panelEdit;
+      if (pe && pe.panelId === panel.id && pe.stateId === id) {
+        pe.stateId = p.active;
+        state.selection = [];
+      }
       state.dirty = true;
       emit("change");
+      return true;
+    },
+    // 状态排序（拖拽/上移下移）：只改顺序，不影响 active 与内容
+    movePanelState(panel, id, delta) {
+      normalizePanel(panel);
+      const arr = panel.panel.states;
+      const i = arr.findIndex((x) => x.id === id);
+      if (i < 0) return false;
+      const j = Math.max(0, Math.min(arr.length - 1, i + delta));
+      if (i === j) return false;
+      const [st] = arr.splice(i, 1);
+      arr.splice(j, 0, st);
+      state.dirty = true;
+      emit("change");
+      return true;
     },
     setPanelState(panel, id) {
       if (this.panelStateById(panel, id)) {
         panel.panel.active = id;
+        const pe = state.panelEdit;
+        if (pe && pe.panelId === panel.id) pe.stateId = id;
         state.dirty = true;
         emit("change");
       }
+    },
+    // 全部状态内容的包围盒并集（用于「适应内容尺寸」；容器子形状按自身包围盒计）
+    panelContentBounds(panel) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const add = (s) => {
+        if (s.type === "connector") {
+          for (const p of [s.begin, s.end]) {
+            if (!p) continue;
+            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+          }
+          return;
+        }
+        minX = Math.min(minX, s.x || 0); minY = Math.min(minY, s.y || 0);
+        maxX = Math.max(maxX, (s.x || 0) + (s.w || 0)); maxY = Math.max(maxY, (s.y || 0) + (s.h || 0));
+      };
+      for (const st of this.panelStates(panel)) for (const ch of st.shapes || []) add(ch);
+      return minX === Infinity ? null : { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+    },
+    // 视口对齐内容：内容保持世界坐标不动，只改面板的 x/y/w/h
+    fitPanelToContent(panel) {
+      const b = this.panelContentBounds(panel);
+      if (!b) return false;
+      panel.x = b.x; panel.y = b.y; panel.w = b.w; panel.h = b.h;
+      state.dirty = true;
+      emit("change");
+      return true;
     },
 
     addShape(type, props) {
@@ -323,6 +460,10 @@ window.VX = window.VX || {};
         style: defaultStyle(type),
       }, props || {});
       ensurePathDesign(s);
+      if (type === "panel") {
+        if (!props || !props.panel) s.panel = defaultPanel();
+        normalizePanel(s);   // 形状库/外部 JSON 的 panel 也统一补齐 active/clip
+      }
       // 面板状态编辑中：新形状归入该状态，其余归页面
       const pe = state.panelEdit;
       if (pe) {
@@ -362,6 +503,13 @@ window.VX = window.VX || {};
         return x;
       };
       reid(copy);
+      // 容器子形状是世界坐标：副本整体偏移 (+10,+10) 时它们必须一起走
+      const shiftKids = (s) => {
+        for (const c of s.children || []) translateShapeTree(c, 10, 10);
+        for (const st of (s.panel && s.panel.states) || []) for (const c of st.shapes || []) translateShapeTree(c, 10, 10);
+      };
+      shiftKids(copy);
+      if (copy.type === "panel") copy.name = nextPanelName();
       copy.x += 10; copy.y += 10;
       copy.z = this.maxZ() + 1;
       this.page().shapes.push(copy);
@@ -400,12 +548,14 @@ window.VX = window.VX || {};
     },
 
     // ---- P2：组合 / 解组 / 布尔 / 对齐 ----
-    // 平移形状（group 递归平移子形状并同步包围盒）
+    // 平移形状：组合/实例/动态面板的子形状都是世界坐标，必须整体跟随
     moveShapeBy(s, dx, dy) {
       if (!s) return;
       s.x += dx; s.y += dy;
       if (s.type === "group" || s.type === "instance") {
-        for (const ch of s.children || []) this.moveShapeBy(ch, dx, dy);
+        for (const ch of s.children || []) translateShapeTree(ch, dx, dy);
+      } else if (s.type === "panel") {
+        for (const st of this.panelStates(s)) for (const ch of st.shapes || []) translateShapeTree(ch, dx, dy);
       }
     },
 
@@ -560,13 +710,25 @@ window.VX = window.VX || {};
       doc.library = Array.isArray(d.library) ? d.library : [];
       // 重置 id 计数避免冲突（含组合/面板/实例/中继器模板子形状）
       nextShapeId = 1; nextPageId = 1;
+      const panelStateIds = new Map();     // panelId -> { ids, first }
+      const stateActions = [];             // 旧文件里需要迁移的 setState 动作
       const scan = (arr) => {
         for (const s of arr || []) {
           ensurePathDesign(s);   // 旧文件与导入的 vsdx 没有 design，按当前包围盒固化
           const sid = parseInt(String(s.id).slice(1), 10) || 1;
           nextShapeId = Math.max(nextShapeId, sid + 1);
+          for (const it of s.interactions || []) {
+            for (const a of (it && it.actions) || []) if (a && a.type === "setState") stateActions.push(a);
+          }
           if (s.type === "group") scan(s.children);
-          if (s.type === "panel") for (const st of (s.panel && s.panel.states) || []) scan(st.shapes);
+          if (s.type === "panel") {
+            normalizePanel(s, false);   // 旧文件保持「不裁剪」，避免历史内容突然不可见
+            panelStateIds.set(s.id, {
+              ids: new Set(s.panel.states.map((x) => x.id)),
+              first: s.panel.states[0].id,
+            });
+            for (const st of s.panel.states) scan(st.shapes);
+          }
           if (s.type === "instance") scan(s.children);
           // 中继器模板是一组形状（重复渲染时按行插值），模板 id 也要计入
           if (s.type === "repeater" && s.repeater) scan(s.repeater.template);
@@ -581,10 +743,22 @@ window.VX = window.VX || {};
         nextPageId = Math.max(nextPageId, pid + 1);
         scan(p.shapes);
       });
+      // 旧版「切换面板状态」下拉在没手动改过时只显示第一态、却不写入 state，文档里存成 ""。
+      // 旧运行时把它当成「回到默认态」，于是按钮点了看不出变化。载入时物化成明确的状态 id，
+      // 顺便把指向已删除状态的动作修正到第一态（next/prev/cycle 是合法的特殊值，保留）。
+      for (const a of stateActions) {
+        const info = panelStateIds.get(a.target);
+        if (!info) continue;
+        const key = String(a.state == null ? "" : a.state).trim();
+        if (key !== "next" && key !== "prev" && key !== "cycle" && (!key || !info.ids.has(key))) {
+          a.state = info.first;
+        }
+      }
       currentPageId = doc.pages[0] ? doc.pages[0].id : null;
       applyPageGrid(doc.pages[0]);
       state.selection = [];
       state.selGuides = [];
+      state.panelEdit = null;   // 载入新文档后旧的状态编辑上下文必须失效
       state.hoverShapeId = null;
       state.hoverAnchor = null;
       state.hoverConnEnd = null;

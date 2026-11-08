@@ -8,6 +8,9 @@
 "use strict";
 
 (function () {
+  // 运行时指纹：改了前端却仍用旧 exe / 旧产物导出时，一眼能看出 HTML 里内嵌的是哪代运行时
+  const RUNTIME_TAG = "panel-state-v2";
+
   // 顺序即依赖顺序（与 index.html 里的引入顺序一致）
   const CLIENT_SCRIPTS = [
     "js/model.js",
@@ -206,7 +209,7 @@
     var p = rt.page();
     if (!p) return;
     var touched = false;
-    VX.Interact.walk(p.shapes, function (s) {
+    rt.walk(p.shapes, function (s) {
       if ((s.interactions || []).some(function (i) { return i.event === "keydown"; })) {
         rt.dispatch(s, "keydown");
         touched = true;
@@ -279,8 +282,9 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', 'Microsoft YaHei'
       "<head>",
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+      `<meta name="visioxure-runtime" content="${RUNTIME_TAG}">`,
       `<title>${escHtml(title)}</title>`,
-      `<!-- 由 Visioxure 导出：形状渲染与交互运行时均取自编辑器同一份代码，勿手工改本文件 -->`,
+      `<!-- 由 Visioxure 导出（运行时 ${RUNTIME_TAG}）：形状渲染与交互运行时均取自编辑器同一份代码，勿手工改本文件 -->`,
       `<style>${base.css}</style>`,
       `<style>${STYLE}</style>`,
       "</head>",
@@ -317,5 +321,5 @@ html, body { margin: 0; height: 100%; font-family: 'Segoe UI', 'Microsoft YaHei'
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
-  VX.ExportHtml = { build, CLIENT_SCRIPTS, fetchText, inlineBase };
+  VX.ExportHtml = { build, CLIENT_SCRIPTS, RUNTIME_TAG, fetchText, inlineBase };
 })();

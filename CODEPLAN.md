@@ -106,7 +106,8 @@
       "text": "登录",
       "path": { "subpaths": [ [ { "x": 0, "y": 0 } ] ], "fillRule": "evenodd", "closed": [true],
                 "design": { "w": 120, "h": 90 } },   // ✅ 布尔结果/自由路径；closed 可选，缺省=全闭合；design 可选=几何的设计尺寸
-      "panel": { "states": [ { "id": "st1", "name": "状态 1", "shapes": [] } ], "active": "st1" },  // ✅
+      "name": "动态面板 1",   // ✅ 面板显示名：状态编辑页签标题
+      "panel": { "states": [ { "id": "st1", "name": "状态 1", "shapes": [] } ], "active": "st1", "clip": true },  // ✅ clip:false = 内容溢出视口；状态子形状为世界坐标；旧文件缺 clip 时按不裁剪归一化
       "glue": { "begin": "s0:3", "end": "s1:0" },   // ✅ 锚点序号 0=上 1=右 2=下 3=左
       "route": "ortho",                             // ✅ straight|ortho|curve|manual
       "points": [ { "x": 0, "y": 0 } ],             // ✅ route=manual 时的用户折线
@@ -163,13 +164,14 @@
 
 ---
 
-## 5. Bridge 命令（`src/main.cpp` 实际 12 条）
+## 5. Bridge 命令（`src/main.cpp` 实际 13 条）
 
 ```cpp
 bridge.test          // 连通性自检（返回 pong + 版本）
 app.set_title        // 标题 + 未保存标记
 app.get_info         // 版本 / 平台
-app.open_url         // 系统浏览器打开（品牌链接）
+app.open_url         // 系统浏览器打开（品牌链接，只放行 http/https）
+app.preview_html     // {name, base64} → 写 %TEMP% 下的 HTML 并用默认浏览器打开（F5 预览）
 file.open_dialog     // 原生打开
 file.open_image      // 图片选择（返回 dataUrl，供 S3 插入图片）
 file.save_dialog     // 原生保存
@@ -193,7 +195,7 @@ log_error            // 前端诊断
 | # | 功能 | 状态 | 实现位置 | 备注 |
 |---|---|---|---|---|
 | 1 | 单 exe、窗口、Bridge 双向 | ✅ | `TauriCPP/` + `main.cpp` | |
-| 2 | CMake / 资源嵌入 / 版本 / 图标 | ✅ | `CMakeLists.txt`、`version.hpp`、`build.ps1` | 1.1.0 |
+| 2 | CMake / 资源嵌入 / 版本 / 图标 | ✅ | `CMakeLists.txt`、`version.hpp`、`build.ps1` | 1.2.0 |
 | 3 | 菜单栏 / 工具栏 / 四栏布局 / 状态栏 | ✅ | `index.html`、`app.css` | |
 | 4 | 最近文件、脏标记标题 | ✅ | `fileio.js`、`main.cpp` | |
 | 5 | 关窗未保存确认 | ⬜ | — | 无 `app.close_confirm` |
@@ -247,8 +249,8 @@ log_error            // 前端诊断
 
 | # | 功能 | 状态 | 实现位置 | 备注 |
 |---|---|---|---|---|
-| 36 | 交互面板：6 事件 × 14 动作 | ✅ | `inspect.js` | click/dblclick/enter/leave/pageload/keydown；含 5 个中继器动作 |
-| 37 | 动态面板多状态编辑/切换 | ✅ | `model.js`、`inspect.js`、`interact.js` | 双击进入状态编辑 |
+| 36 | 交互面板：7 事件 × 13 动作 | ✅ | `inspect.js` | click/dblclick/enter/leave/pageload/keydown/statechange；含 5 个中继器动作 |
+| 37 | 动态面板多状态编辑/切换 | ✅ | `model.js`、`inspect.js`、`interact.js`、`props.js`、`doctabs.js` | 双击打开状态编辑页签（标题=面板名）；状态复制/排序、视口裁剪、适应内容尺寸、切换动效与 OnStateChange |
 | 38 | 三级变量 + `{{var}}` 插值 | ✅ | `interact.js`、`inspect.js` | local → page → global |
 | 39 | F5 全屏预览（含动效、键盘事件） | ✅ | `preview.js` | |
 | 40 | 中继器（数据集/模板/布局/增删行/过滤排序分页） | ✅ | `repeater.js`、`interact.js`、`props.js` | 形状库条目 + CSV 编辑 + 5 个中继器动作 |

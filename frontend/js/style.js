@@ -11,7 +11,8 @@
 
   let root = null;
 
-  // 展开组合/动态面板，收集可样式化的形状（组本身不带 style）
+  // 展开组合/动态面板，收集可样式化的形状（容器本身不带可见样式）。
+  // 面板只取当前状态：改样式应与画布所见一致，不该悄悄改到看不见的状态上
   function targets() {
     const out = [];
     const seen = new Set();
@@ -22,12 +23,12 @@
         for (const ch of s.children || []) walk(ch);
         return;
       }
-      out.push(s);
       if (s.type === "panel") {
-        for (const st of (s.panel && s.panel.states) || []) {
-          for (const ch of st.shapes || []) walk(ch);
-        }
+        const st = VX.Model.panelState(s);
+        for (const ch of (st && st.shapes) || []) walk(ch);
+        return;
       }
+      out.push(s);
     };
     for (const id of S().selection) walk(VX.Model.shape(id));
     return out;

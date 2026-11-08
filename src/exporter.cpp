@@ -3,6 +3,8 @@
 
 #include <Windows.h>
 
+#include <cctype>
+#include <string>
 #include <vector>
 
 namespace vxex {
@@ -127,6 +129,33 @@ nlohmann::json ExportWrite(const nlohmann::json& args) {
     std::string err;
     if (!WriteOutputFile(path, bytes, err)) return nlohmann::json{{"success", false}, {"error", err}};
     return nlohmann::json{{"success", true}, {"path", path}, {"size", bytes.size()}};
+}
+
+std::string MakePreviewPath(const std::string& name) {
+    // 只保留 UTF-8 多字节字节、字母数字、_ - .；其余（含路径分隔符）一律替换
+    std::string safe = name;
+    for (char& c : safe) {
+        unsigned char u = static_cast<unsigned char>(c);
+        if (!(u >= 0x80 || std::isalnum(u) || c == '_' || c == '-' || c == '.')) c = '_';
+    }
+    if (safe.empty()) safe = "未命名";
+    if (safe.size() > 80) safe.resize(80);
+
+    wchar_t buf[MAX_PATH]{};
+    DWORD n = GetTempPathW(MAX_PATH, buf);
+    if (n == 0 || n >= MAX_PATH) return {};
+    std::wstring dir(buf, n);
+    if (!dir.empty() && dir.back() != L'\\' && dir.back() != L'/') dir += L'\\';
+    // 每次预览一个新文件名：浏览器不会拿缓存里的旧版本，重复按 F5 也能开新页签
+    std::wstring wpath = dir + L"Visioxure_" + ToWide(safe) + L"_" +
+                         std::to_wstring(GetCurrentProcessId()) + L"_" +
+                         std::to_wstring(GetTickCount64()) + L".html";
+    int len = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), static_cast<int>(wpath.size()),
+                                  nullptr, 0, nullptr, nullptr);
+    std::string out(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), static_cast<int>(wpath.size()),
+                        out.data(), len, nullptr, nullptr);
+    return out;
 }
 
 }  // namespace vxex

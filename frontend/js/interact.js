@@ -23,21 +23,32 @@
     return null;
   }
 
-  // 遍历页面形状树（含面板全部状态）
-  function walk(arr, fn) {
+  // 遍历页面形状树。传 stateOf(shape) 时动态面板只遍历当前激活状态（页面载入/键盘事件），
+  // 不传则遍历全部状态（查找形状、兼容旧调用）
+  function walk(arr, fn, stateOf) {
     for (const s of arr || []) {
       fn(s);
-      if (s.type === "group" || s.type === "instance") walk(s.children, fn);
-      if (s.type === "panel") for (const st of (s.panel && s.panel.states) || []) walk(st.shapes, fn);
+      if (s.type === "group" || s.type === "instance") walk(s.children, fn, stateOf);
+      if (s.type === "panel") {
+        const states = (s.panel && s.panel.states) || [];
+        const sid = stateOf ? stateOf(s) : null;
+        const one = sid ? states.find((x) => x.id === sid) : null;
+        for (const st of (one ? [one] : states)) walk(st.shapes, fn, stateOf);
+      }
     }
   }
 
   function create(srcDoc) {
     const doc = clone(srcDoc);
+    // 与编辑器 Model.load 同口径：旧文件/手写 JSON 的面板在运行时也要补齐 states/active/clip
+    if (VX.Model && VX.Model.normalizePanel) {
+      for (const p of doc.pages || []) walk(p.shapes, (s) => VX.Model.normalizePanel(s, false));
+    }
     const vars = { global: {}, page: {}, local: {} };
-    const overrides = new Map();   // shapeId → { visible,text,state,dx,dy,opacity }
+    const overrides = new Map();   // shapeId → { visible,text,state,dx,dy,opacity,panelFx }
     const anims = [];
     let pageId = doc.pages && doc.pages[0] ? doc.pages[0].id : null;
+    let eventDepth = 0;            // OnStateChange → setState 递归保护
 
     const byId = (id) => (doc.pages || []).find((p) => p.id === id) || null;
     const page = () => byId(pageId);
@@ -87,8 +98,16 @@
         dx: o.dx,
         dy: o.dy,
         opacity: o.opacity,
+        panelFx: o.panelFx,
       };
     }
+
+    // 遍历可见形状树时取面板的当前状态（运行时覆盖优先，设计态 active 兜底）
+    const activeStateOf = (s) => {
+      const o = overrides.get(s.id);
+      const st = (o && o.state && VX.Model.panelStateById(s, o.state)) || VX.Model.panelState(s);
+      return st ? st.id : null;
+    };
 
     function animate(o, prop, from, to, dur, done) {
       anims.push({ o, prop, from, to, dur: Math.max(1, dur), t: 0, done });
@@ -142,7 +161,47 @@
           return;
         }
         case "setState": {
-          if (a.target) ov(a.target).state = a.state;
+          const panel = findShape((page() || {}).shapes, a.target);
+          if (!panel || panel.type !== "panel") return;
+          const states = (panel.panel && panel.panel.states) || [];
+          if (!states.length) return;
+          const o = ov(panel.id);
+          const curSt = (o.state && VX.Model.panelStateById(panel, o.state)) ||
+                        VX.Model.panelState(panel) || states[0];
+          const cur = curSt.id;
+          const i = Math.max(0, states.findIndex((x) => x.id === cur));
+          const key = String(a.state == null ? "" : a.state).trim();
+          let to = states[0];   // 旧文件里空的 state 依旧表示「第一个状态」
+          if (key === "next") to = states[Math.min(i + 1, states.length - 1)];
+          else if (key === "prev") to = states[Math.max(i - 1, 0)];
+          else if (key === "cycle") to = states[(i + 1) % states.length];
+          else if (key) to = states.find((x) => x.id === key || x.name === key) || states[0];
+
+          const effect = (a.effect === "fade" || a.effect === "slide") ? a.effect : "none";
+          const dur = Math.max(1, Number(a.duration) || 300);
+          // 同面板连续切换：撤掉上一段过渡，避免它的收尾回调删掉新过渡
+          if (o.panelFx) {
+            for (let k = anims.length - 1; k >= 0; k--) if (anims[k].o === o.panelFx) anims.splice(k, 1);
+          }
+          o.state = to.id;
+          if (effect === "none" || to.id === cur) {
+            delete o.panelFx;
+          } else {
+            const fx = {
+              from: cur, to: to.id, effect,
+              dir: ["left", "right", "up", "down"].indexOf(a.direction) >= 0 ? a.direction : "left",
+              progress: 0,
+            };
+            o.panelFx = fx;
+            animate(fx, "progress", 0, 1, dur, () => { if (o.panelFx === fx) delete o.panelFx; });
+          }
+          // OnStateChange 事件（可用 {{panelStateName}} 等局部变量）
+          const fromSt = states.find((x) => x.id === cur);
+          vars.local.panelState = to.id;
+          vars.local.panelStateName = to.name || "";
+          vars.local.panelStateFrom = cur;
+          vars.local.panelStateFromName = fromSt ? (fromSt.name || "") : "";
+          dispatch(panel, "statechange");
           return;
         }
         case "setText": {
@@ -252,10 +311,9 @@
       }
     }
 
+    // 局部变量在「一次顶层事件」内共享（含它派发的 OnStateChange），由 dispatch 统一开合
     function runActions(list, shape) {
-      vars.local = {};
       for (const a of list || []) runAction(a, shape);
-      vars.local = {};
     }
 
     // P5：元素级脚本（meta.scripts）在同一事件触发时执行，沙箱同 runScript
@@ -275,11 +333,8 @@
     function runPageLoad() {
       const p = page();
       if (!p) return;
-      walk(p.shapes, (s) => {
-        const list = (s.interactions || []).filter((i) => i.event === "pageload");
-        for (const it of list) runActions(it.actions, s);
-        runScripts(s, "pageload");
-      });
+      // 只派发当前可见状态：非激活状态里的形状不该收到页面载入事件
+      walk(p.shapes, (s) => dispatch(s, "pageload"), activeStateOf);
     }
 
     function goPage(id) {
@@ -295,10 +350,18 @@
     }
 
     function dispatch(shape, event) {
-      if (!shape) return;
-      const list = (shape.interactions || []).filter((i) => (i.event || "click") === event);
-      for (const it of list) runActions(it.actions, shape);
-      runScripts(shape, event);
+      if (!shape || eventDepth > 6) return;   // OnStateChange 里再切状态的递归保护
+      const top = eventDepth === 0;
+      if (top) vars.local = {};
+      eventDepth++;
+      try {
+        const list = (shape.interactions || []).filter((i) => (i.event || "click") === event);
+        for (const it of list) runActions(it.actions, shape);
+        runScripts(shape, event);
+      } finally {
+        eventDepth--;
+        if (top) vars.local = {};
+      }
     }
 
     function init() {
@@ -310,7 +373,12 @@
       runPageLoad();
     }
 
-    return { doc, vars, overrides, page, pageId: () => pageId, goPage, dispatch, over, displayText, interpolate, tick, init, findShape: (id) => findShape((page() || {}).shapes, id) };
+    return {
+      doc, vars, overrides, page, pageId: () => pageId, goPage, dispatch, over,
+      displayText, interpolate, tick, init,
+      walk: (arr, fn) => walk(arr, fn, activeStateOf),
+      findShape: (id) => findShape((page() || {}).shapes, id),
+    };
   }
 
   VX.Interact = { create, walk };

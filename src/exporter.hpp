@@ -24,4 +24,8 @@ bool WriteOutputFile(const std::string& path, const std::string& bytes, std::str
 // export.write 命令：{path, base64} → {success, path, size}
 nlohmann::json ExportWrite(const nlohmann::json& args);
 
+// F5 预览：在系统临时目录生成唯一的 UTF-8 .html 路径（只算路径，不写盘、不开浏览器）。
+// 文件名由后端生成，避免前端把任意本地路径传给 ShellExecute；空串表示取临时目录失败。
+std::string MakePreviewPath(const std::string& name);
+
 }  // namespace vxex

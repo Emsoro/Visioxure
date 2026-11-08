@@ -75,7 +75,10 @@
     const pts = VX.Routing.pointsOf(s);
     if (!pts || pts.length < 2) return;
 
-    c.globalAlpha = st.opacity != null ? st.opacity : 1;
+    // 面板状态淡入淡出时会给子形状叠加 opacity，连接线也要跟其它形状同口径
+    const ov = opts && opts.over ? opts.over(s) : null;
+    const extraAlpha = (ov && ov.opacity != null) ? ov.opacity : 1;
+    c.globalAlpha = (st.opacity != null ? st.opacity : 1) * extraAlpha;
     c.strokeStyle = color;
     c.lineWidth = lw;
     c.lineJoin = "round";
@@ -295,19 +298,80 @@
       return;
     }
 
-    // 动态面板：只画当前状态的子形状；编辑器里额外画虚线示意边界
+    // 动态面板：视口 + 当前状态；运行时支持状态切换过渡（fade / slide）
     if (s.type === "panel") {
+      const z = vp.zoom || 1;
+      const editing = !!(opts && opts.editor && VX.state.panelEdit && VX.state.panelEdit.panelId === s.id);
       if (opts && opts.editor) {
-        c.strokeStyle = "#b9c2d0";
-        c.lineWidth = 1 / (vp.zoom || 1);
-        c.setLineDash([6 / (vp.zoom || 1), 4 / (vp.zoom || 1)]);
-        c.strokeRect(s.x + 0.5 / (vp.zoom || 1), s.y + 0.5 / (vp.zoom || 1), Math.max(1, s.w), Math.max(1, s.h));
+        c.strokeStyle = editing ? "#2f6fed" : "#b9c2d0";
+        c.lineWidth = 1 / z;
+        c.setLineDash([6 / z, 4 / z]);
+        c.strokeRect(s.x + 0.5 / z, s.y + 0.5 / z, Math.max(1, s.w), Math.max(1, s.h));
         c.setLineDash([]);
+        if (editing) {
+          const cur = VX.Model.panelStateById(s, VX.state.panelEdit.stateId) || VX.Model.panelState(s);
+          c.save();
+          c.fillStyle = "#2f6fed";
+          c.font = `${11 / z}px 'Segoe UI', Arial, sans-serif`;
+          c.textBaseline = "bottom";
+          c.fillText("状态编辑 · " + (cur ? cur.name : ""), s.x, s.y - 2 / z);
+          c.restore();
+        }
       }
-      let stObj = null;
-      if (ov && ov.state) stObj = VX.Model.panelStateById(s, ov.state) || VX.Model.panelState(s);
-      else stObj = VX.Model.panelState(s);
-      for (const ch of (stObj ? stObj.shapes || [] : [])) drawShape(c, ch, vp, opts);
+      let activeState = null;
+      if (ov && ov.state) activeState = VX.Model.panelStateById(s, ov.state) || VX.Model.panelState(s);
+      else activeState = VX.Model.panelState(s);
+      const fx = ov && ov.panelFx;
+
+      const drawState = (stObj, alpha, shiftX, shiftY) => {
+        if (!stObj) return;
+        c.save();
+        if (shiftX || shiftY) c.translate(shiftX, shiftY);
+        let subOpts = opts;
+        if (alpha < 1) {
+          // 子形状各自设置 globalAlpha，只能经 over().opacity 叠加过渡透明度
+          subOpts = Object.assign({}, opts, {
+            over: (ch) => {
+              const base = opts.over ? opts.over(ch) : null;
+              return Object.assign({}, base || {}, {
+                opacity: (base && base.opacity != null ? base.opacity : 1) * alpha,
+              });
+            },
+          });
+        }
+        for (const ch of stObj.shapes || []) drawShape(c, ch, vp, subOpts);
+        c.restore();
+      };
+
+      const drawContent = () => {
+        if (!fx) { drawState(activeState, 1, 0, 0); return; }
+        const k = Math.max(0, Math.min(1, fx.progress || 0));
+        const from = VX.Model.panelStateById(s, fx.from);
+        const to = VX.Model.panelStateById(s, fx.to) || activeState;
+        if (fx.effect === "fade") {
+          drawState(from, 1 - k, 0, 0);
+          drawState(to, k, 0, 0);
+          return;
+        }
+        // 滑动：旧状态滑出，新状态从反方向滑入；两组都受视口裁剪
+        const w = Math.max(1, s.w), h = Math.max(1, s.h);
+        const dir = fx.dir || "left";
+        const sx = dir === "left" ? -w : dir === "right" ? w : 0;
+        const sy = dir === "up" ? -h : dir === "down" ? h : 0;
+        drawState(from, 1, sx * k, sy * k);
+        drawState(to, 1, -sx * (1 - k), -sy * (1 - k));
+      };
+
+      // 视口裁剪：编辑当前状态本身时放宽，方便调整溢出到框外的内容
+      const clip = !editing && VX.Model.panelClip(s);
+      if (clip) {
+        c.save();
+        c.beginPath();
+        c.rect(s.x, s.y, Math.max(1, s.w), Math.max(1, s.h));
+        c.clip();
+      }
+      drawContent();
+      if (clip) c.restore();
       c.restore();
       return;
     }

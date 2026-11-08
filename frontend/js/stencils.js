@@ -577,11 +577,18 @@
     VX.Renderer.invalidate();
   }
 
-  // 点击插入：落在当前视口中心；同一位置连点时阶梯错位
+  // 点击插入：落在当前视口中心；同一位置连点时阶梯错位。
+  // 状态编辑中点插时改落在面板视口中心：否则新形状会被视口裁剪掉，看起来「插入了却什么都没有」
   function insertAtCenter(item) {
     const c = document.getElementById("canvas");
     const wpt = VX.Viewport.s2w(c.clientWidth / 2, c.clientHeight / 2);
-    const bx = snapVal(wpt.x - item.def.w / 2), by = snapVal(wpt.y - item.def.h / 2);
+    let bx = snapVal(wpt.x - item.def.w / 2), by = snapVal(wpt.y - item.def.h / 2);
+    const pe = VX.state.panelEdit;
+    const panel = pe ? VX.Model.shape(pe.panelId) : null;
+    if (panel && panel.type === "panel") {
+      bx = snapVal(panel.x + Math.max(0, (panel.w - item.def.w) / 2));
+      by = snapVal(panel.y + Math.max(0, (panel.h - item.def.h) / 2));
+    }
     const page = VX.Model.currentPageId();
     const same = cascade && cascade.page === page && cascade.x === bx && cascade.y === by;
     const n = same ? (cascade.n + 1) % (CASCADE_MAX + 1) : 0;

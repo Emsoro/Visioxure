@@ -7,6 +7,7 @@
   const EVENTS = [
     ["click", "点击"], ["dblclick", "双击"], ["mouseenter", "鼠标移入"],
     ["mouseleave", "鼠标移出"], ["pageload", "页面载入"], ["keydown", "按键"],
+    ["statechange", "状态改变"],   // 动态面板专用：setState 动作触发
   ];
   const ACTION_TYPES = [
     ["openLink", "打开链接/跳页"], ["show", "显示"], ["hide", "隐藏"],
@@ -119,21 +120,51 @@
       box.appendChild(r1);
     } else if (a.type === "setState") {
       const panels = allShapes().filter((s) => s.type === "panel");
-      const panelOpts = [["", "（选择面板）"]].concat(panels.map((p) => [p.id, shapeLabel(p)]));
+      const panelOpts = [["", "（选择面板）"]]
+        .concat(panels.map((p) => [p.id, VX.Model.panelName(p) + " · " + p.id]));
       const r1 = row();
       r1.appendChild(el("span", "ip-muted", "面板"));
       r1.appendChild(select(panelOpts, a.target || "", (v) => { a.target = v; a.state = ""; rerender(); }));
       box.appendChild(r1);
       const panel = panels.find((p) => p.id === a.target);
-      const states = (panel && panel.panel && panel.panel.states) || [];
+      const states = VX.Model.panelStates(panel);
+      const stateOpts = [
+        ["", "（默认：第一个状态）"],
+        ["next", "下一个状态"], ["prev", "上一个状态"], ["cycle", "循环下一个"],
+      ].concat(states.map((st) => [st.id, st.name]));
       const r2 = row();
-      r2.appendChild(el("span", "ip-muted", "状态"));
-      if (states.length) {
-        r2.appendChild(select(states.map((st) => [st.id, st.name]), a.state || states[0].id, (v) => { a.state = v; }));
-      } else {
-        r2.appendChild(el("span", "ip-muted", "该面板没有状态"));
-      }
+      r2.appendChild(el("span", "ip-muted", "切到"));
+      r2.appendChild(select(stateOpts, a.state || "", (v) => { a.state = v; }));
+      if (!panel) r2.appendChild(el("span", "ip-muted", "未选择面板"));
       box.appendChild(r2);
+      const r3 = row();
+      r3.appendChild(el("span", "ip-muted", "动效"));
+      r3.appendChild(select([["none", "无"], ["fade", "淡入淡出"], ["slide", "滑动"]],
+        a.effect || "none", (v) => { a.effect = v; rerender(); }));
+      if (a.effect === "slide") {
+        r3.appendChild(select([["left", "向左"], ["right", "向右"], ["up", "向上"], ["down", "向下"]],
+          a.direction || "left", (v) => { a.direction = v; }));
+      }
+      r3.appendChild(el("span", "ip-muted", "时长"));
+      r3.appendChild(number(a.duration == null ? 300 : a.duration, (v) => { a.duration = v; }, "50"));
+      box.appendChild(r3);
+      // 切换「看起来没反应」大多不是运行时坏了，而是配置/内容本身没有可见差异：直接给出诊断
+      if (!panel) {
+        box.appendChild(el("div", "ip-muted", "未选择目标面板：这个动作不会生效，请先在上面选一个动态面板。"));
+      } else if (states.length < 2) {
+        box.appendChild(el("div", "ip-muted", "该面板只有 1 个状态，切换不会有可见变化；请在下方「动态面板状态」里添加状态。"));
+      } else if (states.every((st) => !(st.shapes || []).length)) {
+        box.appendChild(el("div", "ip-muted", "所有状态都是空的，切换后画布看不出变化；双击面板打开状态页签并添加内容。"));
+      } else {
+        // 目标是面板当前默认状态时，第一次点击本来就不会有变化（很常见于旧文件）
+        const cur = VX.Model.panelState(panel);
+        const key = String(a.state || "");
+        const target = key ? states.find((st) => st.id === key || st.name === key) : states[0];
+        if (target && cur && target.id === cur.id) {
+          box.appendChild(el("div", "ip-muted", "该动作切到面板当前的默认状态，首次点击看不到变化；可改成另一个状态，或用「下一个 / 循环下一个」。"));
+        }
+      }
+      box.appendChild(el("div", "ip-muted", "交互只在 F5 预览 / 导出的 HTML 中执行；编辑器里点形状只会选中它。若内容仍不可见，检查属性面板的「内容裁剪」。"));
     } else if (a.type === "setText") {
       const r1 = row();
       r1.appendChild(el("span", "ip-muted", "目标"));
@@ -267,6 +298,9 @@
         render();
       }));
       card.appendChild(head);
+      if (it.event === "statechange") {
+        card.appendChild(el("div", "ip-muted", "面板切换状态时触发；可用 {{panelStateName}} / {{panelStateFromName}} 引用新旧状态名"));
+      }
 
       it.actions = it.actions || [];
       it.actions.forEach((a, ai) => {
@@ -306,43 +340,54 @@
     const sec = el("div", "ip-card");
     const states = VX.Model.panelStates(shape);
     const active = VX.Model.panelState(shape);
-    const editing = VX.state.panelEdit && VX.state.panelEdit.panelId === shape.id;
+    const pe = VX.state.panelEdit;
+    const editing = pe && pe.panelId === shape.id;
+    const rerun = (label, fn) => {
+      VX.History.run(label, fn);
+      VX.Events.emit("selection");
+      markDirty();
+      render();
+    };
 
     states.forEach((st) => {
-      const row = el("div", "ip-row");
+      const r = el("div", "ip-row");
       const radio = document.createElement("input");
       radio.type = "radio";
       radio.name = "panel-state-" + shape.id;
       radio.checked = active && st.id === active.id;
+      radio.title = "设为默认状态（写入文档）";
       radio.addEventListener("change", () => {
         VX.Model.setPanelState(shape, st.id);
-        if (VX.state.panelEdit) VX.state.panelEdit.stateId = st.id;
         markDirty();
         render();
+        const msg = document.getElementById("status-msg");
+        if (msg) msg.textContent = `${VX.Model.panelName(shape)}：当前状态已切到「${st.name}」（画布与导出都会用它）`;
       });
-      row.appendChild(radio);
-      row.appendChild(input(st.name, (v) => { st.name = v; markDirty(); }, "状态名"));
-      row.appendChild(el("span", "ip-muted", `${(st.shapes || []).length} 个形状`));
+      r.appendChild(radio);
+      r.appendChild(input(st.name, (v) => { st.name = v; markDirty(); }, "状态名"));
+      r.appendChild(el("span", "ip-muted", `${(st.shapes || []).length} 个形状`));
+      r.appendChild(button("↑", () => rerun("上移面板状态", () => VX.Model.movePanelState(shape, st.id, -1)), "上移"));
+      r.appendChild(button("↓", () => rerun("下移面板状态", () => VX.Model.movePanelState(shape, st.id, 1)), "下移"));
+      r.appendChild(button("复制", () => rerun("复制面板状态", () => VX.Model.addPanelState(shape, null, st.id)),
+        "复制该状态及其全部形状（形状重新生成 id）"));
       if (states.length > 1) {
-        row.appendChild(button("删除", () => {
-          VX.History.run("删除面板状态", () => VX.Model.removePanelState(shape, st.id));
-          markDirty();
-          render();
-        }));
+        r.appendChild(button("删除", () => rerun("删除面板状态", () => VX.Model.removePanelState(shape, st.id))));
       }
-      sec.appendChild(row);
+      sec.appendChild(r);
     });
-    sec.appendChild(button("+ 添加状态", () => {
-      VX.History.run("添加面板状态", () => VX.Model.addPanelState(shape));
-      markDirty();
-      render();
-    }));
+    if (editing) {
+      const cur = VX.Model.panelStateById(shape, pe.stateId);
+      sec.appendChild(el("div", "ip-muted", "正在编辑：" + (cur ? cur.name : "—") + " · 新建的形状会归入该状态；Esc 返回页面"));
+    }
+    sec.appendChild(el("div", "ip-muted", "左侧单选切换的是设计态（画布/导出显示的默认状态）；按 F5 可预览点击按钮切状态。"));
+    sec.appendChild(button("+ 空白状态", () => rerun("添加面板状态", () => VX.Model.addPanelState(shape))));
+    sec.appendChild(button("+ 复制当前状态", () =>
+      rerun("复制面板状态", () => VX.Model.addPanelState(shape, null, active ? active.id : null))));
     sec.appendChild(button(editing ? "退出状态编辑" : "进入状态编辑", () => {
       if (editing) {
         VX.state.panelEdit = null;
       } else {
-        const st = VX.Model.panelState(shape);
-        VX.state.panelEdit = { panelId: shape.id, stateId: st ? st.id : null };
+        VX.state.panelEdit = { panelId: shape.id, stateId: active ? active.id : null };
         VX.state.selection = [];
       }
       VX.Events.emit("paneledit");
@@ -391,7 +436,7 @@
 
     // 面板状态
     if (shape && shape.type === "panel") {
-      host.appendChild(el("div", "ip-sec", "动态面板状态 · " + shape.id));
+      host.appendChild(el("div", "ip-sec", "动态面板状态 · " + VX.Model.panelName(shape)));
       host.appendChild(renderPanelStates(shape));
     }
 

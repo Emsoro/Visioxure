@@ -261,12 +261,18 @@
     }
 
     if (s.type === "panel") {
-      // 只画当前状态（编辑态的虚线示意边界属于编辑器，不进导出）
+      // 只画当前状态（编辑态的虚线示意边界属于编辑器，不进导出）；裁剪与 Canvas 渲染同口径
       let stObj = null;
       if (ov && ov.state) stObj = VX.Model.panelStateById(s, ov.state) || VX.Model.panelState(s);
       else stObj = VX.Model.panelState(s);
       let inner = "";
       for (const ch of (stObj ? stObj.shapes || [] : [])) inner += shapeSvg(ch, ctx);
+      if (VX.Model.panelClip(s)) {
+        const clipId = "vxpanelclip-" + String(s.id).replace(/[^\w-]/g, "_");
+        const clip = `<clipPath id="${clipId}"><rect x="${R3(s.x)}" y="${R3(s.y)}" ` +
+          `width="${R3(Math.max(1, s.w))}" height="${R3(Math.max(1, s.h))}"/></clipPath>`;
+        return `<g data-vx-id="${esc(s.id)}"${tr}>${clip}<g clip-path="url(#${clipId})">${inner}</g></g>`;
+      }
       return `<g data-vx-id="${esc(s.id)}"${tr}>${inner}</g>`;
     }
 

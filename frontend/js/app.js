@@ -65,6 +65,17 @@ function initPanelTabs() {
   });
 }
 
+// ---------- 菜单栏最右边的「预览」按钮（F5 同入口） ----------
+// 不放进 initMenus 的 [data-menu] 下拉体系：它是直接执行的动作按钮
+function initPreviewButton() {
+  const btn = $("#btn-preview");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    $$(".menu-drop").forEach((d) => d.classList.add("hidden"));
+    if (VX.Exporter && VX.Exporter.previewInBrowser) VX.Exporter.previewInBrowser();
+  });
+}
+
 // ---------- 工具按钮点击（状态同步在 editor.js syncToolButtons） ----------
 function initTools() {
   $("#tools").addEventListener("click", (e) => {
@@ -109,6 +120,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (VX.StylePanel) VX.StylePanel.init();
   if (VX.Props) VX.Props.init();
   if (VX.Inspect) VX.Inspect.init();
+  if (VX.DocTabs) VX.DocTabs.init();   // 画布上方的页面 / 动态面板状态编辑页签
   if (VX.Meta) VX.Meta.init();
   if (VX.PagePanel) VX.PagePanel.init();
   VX.FileIO.init();
@@ -116,6 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initMenus();                           // 一级菜单（文件 / 导出）的开合与互斥
   initPanelTabs();
   initTools();
+  initPreviewButton();
   initBrandLinks();
   initVersion();
 });
