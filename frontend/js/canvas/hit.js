@@ -6,8 +6,9 @@
   // 离屏 2D 上下文：仅用于 isPointInPath/isPointInStroke 判定
   const mctx = document.createElement("canvas").getContext("2d");
 
-  // 点是否在旋转形状包围盒内（粗判，局部 AABB）
-  function inAABB(s, wx, wy) {
+  // 点是否在旋转形状包围盒内（粗判，局部 AABB）；tol 为世界单位的外扩容差
+  function inAABB(s, wx, wy, tol) {
+    const t = tol || 0;
     const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
     let dx = wx - cx, dy = wy - cy;
     if (s.angle) {
@@ -15,7 +16,7 @@
       const rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
       dx = rx; dy = ry;
     }
-    return dx >= -s.w / 2 && dx <= s.w / 2 && dy >= -s.h / 2 && dy <= s.h / 2;
+    return dx >= -s.w / 2 - t && dx <= s.w / 2 + t && dy >= -s.h / 2 - t && dy <= s.h / 2 + t;
   }
 
   // 世界 → 形状局部坐标（原点=中心，逆旋转）
@@ -56,8 +57,11 @@
       return (s.children || []).some((ch) => !ch.lock && inShape(ch, wx, wy));
     }
     if (s.type === "panel") {
-      // 开启裁剪时视口外的溢出内容既看不到，也不该被点中
-      if (VX.Model.panelClip(s) && !inAABB(s, wx, wy)) return false;
+      // 编辑态虚线框只有 1 屏幕像素：视口内（含框线容差）直接命中面板本身，
+      // 否则空面板、状态里没有形状的面板就永远点不中
+      if (inAABB(s, wx, wy, 6 / (VX.state.zoom || 1))) return true;
+      // 关闭裁剪时溢出到视口外的子形状仍可点中面板；开启裁剪则视口外一律不命中
+      if (VX.Model.panelClip(s)) return false;
       const st = VX.Model.panelState(s);
       return st ? (st.shapes || []).some((ch) => !ch.lock && inShape(ch, wx, wy)) : false;
     }
@@ -99,6 +103,9 @@
           for (let j = kids.length - 1; j >= 0; j--) {
             if (inShape(kids[j], wx, wy)) return kids[j];
           }
+          // 编辑态的蓝色虚线框也要能选中面板本身；框内空白处仍留给框选子形状
+          const tol = 6 / (VX.state.zoom || 1);
+          if (inAABB(s, wx, wy, tol) && !inAABB(s, wx, wy, -tol)) return s;
           return null;
         }
         if (enter && s.id === enter) {

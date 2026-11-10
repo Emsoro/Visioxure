@@ -463,6 +463,17 @@
     }
   }
 
+  // 固化 path 子形状的「设计尺寸」：Group 内的图标/箭头不在 Model.addShape 的顶层补 design，
+  // 缺了它 Geometry.pathScale 恒为 1，缩放时只有选框变大、图形原地不动（看起来就是变形）
+  function ensureDesigns(list) {
+    for (const s of list || []) {
+      if (s.type === "path" && s.path && !s.path.design) s.path.design = { w: s.w, h: s.h };
+      if (s.children) ensureDesigns(s.children);
+      if (s.panel && s.panel.states) for (const st of s.panel.states) ensureDesigns(st.shapes);
+      if (s.repeater) ensureDesigns(s.repeater.template);
+    }
+  }
+
   // 条目实际样式：默认「无填充 + 深灰描边」，条目 def.style 覆盖；
   // 无填充时字色落成深色（否则默认白字在白纸上不可见）
   function stencilStyle(def) {
@@ -556,7 +567,7 @@
   const CASCADE_STEP = 20;
   const CASCADE_MAX = 8;
   const DRAG_THRESHOLD = 4;      // 按下后移动超过这个距离才算拖拽
-  let cascade = null;            // { page, x, y, n } 上一次点击插入的基准落点
+  let cascade = null;            // { key, x, y, n } 上一次点击插入的基准落点（key 区分页面 / 面板状态）
   let press = null;              // 按下的条目（越过阈值前还只是候选点击）
   let dragDrop = null;           // 拖拽会话 { item, ghost }
   let dragEndedAt = 0;           // 拖拽结束时刻：用来吞掉紧随其后的 click
@@ -566,10 +577,25 @@
     return Math.round(v / g) * g;
   }
 
+  // 状态编辑：点插与拖拽都把形状完整钳制在面板视口内，
+  // 否则退出编辑后会被 panelClip 裁掉，看起来像「添加组件不起作用」
+  function clampToPanel(x, y, w, h) {
+    const pe = VX.state.panelEdit;
+    const panel = pe ? VX.Model.shape(pe.panelId) : null;
+    if (!panel || panel.type !== "panel") return { x, y };
+    return {
+      x: Math.min(Math.max(x, panel.x), panel.x + Math.max(0, panel.w - w)),
+      y: Math.min(Math.max(y, panel.y), panel.y + Math.max(0, panel.h - h)),
+    };
+  }
+
   function insertAt(item, x, y) {
+    const pt = clampToPanel(x, y, item.def.w, item.def.h);
     let id;
     VX.History.run("插入" + item.name, () => {
-      id = VX.Model.addShape(item.def.type, makeShapeProps(item, x, y)).id;
+      const props = makeShapeProps(item, pt.x, pt.y);
+      ensureDesigns([props]);
+      id = VX.Model.addShape(item.def.type, props).id;
     });
     VX.state.selection = [id];
     VX.state.enterGroup = null;
@@ -585,15 +611,23 @@
     let bx = snapVal(wpt.x - item.def.w / 2), by = snapVal(wpt.y - item.def.h / 2);
     const pe = VX.state.panelEdit;
     const panel = pe ? VX.Model.shape(pe.panelId) : null;
-    if (panel && panel.type === "panel") {
+    const inPanel = !!(panel && panel.type === "panel");
+    if (inPanel) {
       bx = snapVal(panel.x + Math.max(0, (panel.w - item.def.w) / 2));
       by = snapVal(panel.y + Math.max(0, (panel.h - item.def.h) / 2));
     }
-    const page = VX.Model.currentPageId();
-    const same = cascade && cascade.page === page && cascade.x === bx && cascade.y === by;
+    // 同一「页面 / 面板状态」才延续级联，跨状态不能继承上次的偏移
+    const ctxKey = VX.Model.currentPageId() + "|" + (pe ? pe.panelId + ":" + pe.stateId : "");
+    const same = cascade && cascade.key === ctxKey && cascade.x === bx && cascade.y === by;
     const n = same ? (cascade.n + 1) % (CASCADE_MAX + 1) : 0;
-    cascade = { page, x: bx, y: by, n };
-    insertAt(item, bx + CASCADE_STEP * n, by + CASCADE_STEP * n);
+    cascade = { key: ctxKey, x: bx, y: by, n };
+    let off = CASCADE_STEP * n;
+    if (inPanel) {
+      // 级联不能把形状推出视口：在可用空间内回绕，保证退出编辑后仍可见
+      const avail = Math.max(0, Math.min(panel.w - item.def.w, panel.h - item.def.h));
+      off = avail > 0 ? off % (avail + 1) : 0;
+    }
+    insertAt(item, bx + off, by + off);
   }
 
   // 拖拽插入：形状中心对准落点（落点是精确位置，下一次点击从原位重新开始）

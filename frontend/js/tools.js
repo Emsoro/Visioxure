@@ -273,7 +273,8 @@
           if (h) {
             drag = h.id === "rot"
               ? { mode: "rotate", shape: s, cx: s.x + s.w / 2, cy: s.y + s.h / 2, startAngle: s.angle || 0 }
-              : { mode: "resize", shape: s, handle: h.id, start: Object.assign({}, s) };
+              // 深拷贝：拖拽每帧都要以初始子形状为基准重算，浅拷贝会让 children 逐帧连乘漂移
+              : { mode: "resize", shape: s, handle: h.id, start: JSON.parse(JSON.stringify(s)) };
             return;
           }
         }
@@ -623,11 +624,28 @@
       VX.Table.resize(s, { x, y, w: fw, h: fh });
     } else if (s.type === "group" && start.w > 0.5 && start.h > 0.5) {
       const kx = fw / start.w, ky = fh / start.h;
-      for (const ch of s.children || []) {
-        ch.x = x + (ch.x - start.x) * kx;
-        ch.y = y + (ch.y - start.y) * ky;
-        if (ch.type !== "group") { ch.w = Math.max(4, ch.w * kx); ch.h = Math.max(4, ch.h * ky); }
-      }
+      const k = Math.sqrt(Math.max(0, kx * ky));   // 字号/圆角用等比系数，非等比拉伸时不走极端
+      // 每帧都从初始快照取值写回当前子形状，绝不基于上一帧的结果再乘一次
+      const scaleKids = (kids, srcKids) => {
+        for (let i = 0; i < kids.length; i++) {
+          const ch = kids[i], src = srcKids[i];
+          if (!src) continue;
+          ch.x = x + (src.x - start.x) * kx;
+          ch.y = y + (src.y - start.y) * ky;
+          ch.w = Math.max(4, (src.w || 0) * kx);
+          ch.h = Math.max(4, (src.h || 0) * ky);
+          if (ch.style && src.style) {
+            if (ch.style.font && src.style.font && src.style.font.size) {
+              ch.style.font.size = Math.max(6, src.style.font.size * k);
+            }
+            if (typeof src.style.cornerRadius === "number") {
+              ch.style.cornerRadius = src.style.cornerRadius * k;
+            }
+          }
+          if (ch.children && src.children) scaleKids(ch.children, src.children);
+        }
+      };
+      scaleKids(s.children || [], start.children || []);
     }
   }
 

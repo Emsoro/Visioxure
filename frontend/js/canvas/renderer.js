@@ -301,7 +301,8 @@
     // 动态面板：视口 + 当前状态；运行时支持状态切换过渡（fade / slide）
     if (s.type === "panel") {
       const z = vp.zoom || 1;
-      const editing = !!(opts && opts.editor && VX.state.panelEdit && VX.state.panelEdit.panelId === s.id);
+      const pe = VX.state.panelEdit;
+      const editing = !!(opts && opts.editor && pe && pe.panelId === s.id);
       if (opts && opts.editor) {
         c.strokeStyle = editing ? "#2f6fed" : "#b9c2d0";
         c.lineWidth = 1 / z;
@@ -320,6 +321,7 @@
       }
       let activeState = null;
       if (ov && ov.state) activeState = VX.Model.panelStateById(s, ov.state) || VX.Model.panelState(s);
+      else if (editing) activeState = VX.Model.panelStateById(s, pe.stateId) || VX.Model.panelState(s);
       else activeState = VX.Model.panelState(s);
       const fx = ov && ov.panelFx;
 
@@ -676,6 +678,21 @@
 
     // 形状（z 升序）：世界坐标 → 视口（缩放 + 平移）
     drawShapes(c, pg, vp, { editor: true });
+
+    // 动态面板状态编辑：视口以外的画布压暗，突出当前编辑区域；退出编辑（panelEdit=null）自动恢复
+    const pe = VX.state.panelEdit;
+    const editPanel = pe && VX.Model.shape(pe.panelId);
+    if (editPanel && editPanel.type === "panel") {
+      const a = vp.w2s(editPanel.x, editPanel.y);
+      const pw = Math.max(1, editPanel.w) * vp.zoom;
+      const ph = Math.max(1, editPanel.h) * vp.zoom;
+      const top = 18;   // 「状态编辑 · 状态名」标签画在框上方，一起留亮
+      const mask = new Path2D();
+      mask.rect(0, 0, w, h);
+      mask.rect(a.x - 1, a.y - top, pw + 2, ph + top + 2);
+      c.fillStyle = "rgba(15, 23, 42, 0.38)";
+      c.fill(mask, "evenodd");
+    }
 
     // 连接点（悬停 / 单选 / 连接线工具）
     drawConnectionPoints(c, vp);
