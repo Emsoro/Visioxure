@@ -309,6 +309,19 @@ window.VX = window.VX || {};
 
     // ---- 形状 ----
     shapes() { return this.page().shapes; },
+    // 当前编辑容器：动态面板状态编辑中新形状进该状态，其余进当前页
+    shapeList() {
+      const pe = state.panelEdit;
+      if (pe) {
+        const panel = this.shape(pe.panelId);
+        const st = panel && this.panelStateById(panel, pe.stateId);
+        if (st) {
+          if (!Array.isArray(st.shapes)) st.shapes = [];
+          return st.shapes;
+        }
+      }
+      return this.page().shapes;
+    },
     shape(id) {
       const find = (arr) => {
         for (const s of arr || []) {
@@ -465,18 +478,7 @@ window.VX = window.VX || {};
         normalizePanel(s);   // 形状库/外部 JSON 的 panel 也统一补齐 active/clip
       }
       // 面板状态编辑中：新形状归入该状态，其余归页面
-      const pe = state.panelEdit;
-      if (pe) {
-        const panel = this.shape(pe.panelId);
-        const st = panel && this.panelStateById(panel, pe.stateId);
-        if (st) {
-          if (!Array.isArray(st.shapes)) st.shapes = [];
-          st.shapes.push(s);
-          state.dirty = true;
-          return s;
-        }
-      }
-      this.page().shapes.push(s);
+      this.shapeList().push(s);
       state.dirty = true;
       return s;
     },
@@ -490,29 +492,25 @@ window.VX = window.VX || {};
       return s;
     },
 
-    // 深拷贝形状（组递归重生成 id，避免复制后 id 冲突），偏移 (+10,+10)
-    duplicateShape(id) {
-      const src = this.shape(id);
+    // Ctrl+D：把当前选中的形状深拷贝一份，偏移 (+10,+10)
+    duplicateShape(id) { return this.insertShapeCopy(this.shape(id), 10, 10); },
+
+    // 插入形状快照（Ctrl+C/V 剪贴板、Ctrl+D 共用）：重新分配 id、整体平移、放入当前编辑容器
+    insertShapeCopy(src, dx, dy) {
       if (!src) return null;
       const copy = JSON.parse(JSON.stringify(src));
       const reid = (x) => {
-        x.id = "s" + nextShapeId++;
-        if ((x.type === "group" || x.type === "instance") && x.children) x.children.forEach(reid);
-        if (x.type === "panel") for (const st of (x.panel && x.panel.states) || []) (st.shapes || []).forEach(reid);
-        if (x.type === "repeater") for (const t of (x.repeater && x.repeater.template) || []) reid(t);
-        return x;
+        x.id = this.nextId();
+        for (const c of x.children || []) reid(c);
+        for (const st of (x.panel && x.panel.states) || []) for (const c of st.shapes || []) reid(c);
+        for (const t of (x.repeater && x.repeater.template) || []) reid(t);
       };
       reid(copy);
-      // 容器子形状是世界坐标：副本整体偏移 (+10,+10) 时它们必须一起走
-      const shiftKids = (s) => {
-        for (const c of s.children || []) translateShapeTree(c, 10, 10);
-        for (const st of (s.panel && s.panel.states) || []) for (const c of st.shapes || []) translateShapeTree(c, 10, 10);
-      };
-      shiftKids(copy);
-      if (copy.type === "panel") copy.name = nextPanelName();
-      copy.x += 10; copy.y += 10;
+      // 容器子形状/连接线端点/中继器模板都是世界坐标：副本整体偏移时它们必须一起走
+      translateShapeTree(copy, dx, dy);
       copy.z = this.maxZ() + 1;
-      this.page().shapes.push(copy);
+      this.shapeList().push(copy);
+      if (copy.type === "panel") copy.name = nextPanelName();
       state.dirty = true;
       return copy;
     },
@@ -575,7 +573,7 @@ window.VX = window.VX || {};
     group(ids) {
       const shapes = (ids || state.selection).map((id) => this.shape(id)).filter(Boolean);
       if (shapes.length < 2) return null;
-      const pg = this.page();
+      const list = this.shapeList();
       const z = Math.max(...shapes.map((s) => s.z || 0));
       const set = new Set(shapes.map((s) => s.id));
       const g = {
@@ -588,8 +586,8 @@ window.VX = window.VX || {};
         children: shapes,
       };
       this.syncGroupBounds(g);
-      pg.shapes = pg.shapes.filter((s) => !set.has(s.id));
-      pg.shapes.push(g);
+      for (let i = list.length - 1; i >= 0; i--) if (set.has(list[i].id)) list.splice(i, 1);
+      list.push(g);
       state.selection = [g.id];
       state.enterGroup = null;
       state.dirty = true;
@@ -598,17 +596,16 @@ window.VX = window.VX || {};
     },
 
     ungroup(ids) {
-      const pg = this.page();
+      const list = this.shapeList();
       const out = [];
       for (const id of (ids || state.selection)) {
         const g = this.shape(id);
         if (!g || g.type !== "group") continue;
-        // 子形状回到页面（z 保持），插入到组原来所在位置之前
-        const at = pg.shapes.indexOf(g);
-        for (const ch of (g.children || []).reverse()) {
-          pg.shapes.splice(at, 0, ch);
-        }
-        pg.shapes = pg.shapes.filter((s) => s !== g);
+        const at = list.indexOf(g);
+        if (at < 0) continue;   // 组不在当前编辑容器里则跳过
+        // 子形状回到容器（z 保持），插入到组原来所在位置之前
+        for (const ch of (g.children || []).slice().reverse()) list.splice(at, 0, ch);
+        list.splice(list.indexOf(g), 1);
         out.push(...(g.children || []).map((c) => c.id));
       }
       state.selection = out;

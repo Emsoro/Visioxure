@@ -6,6 +6,7 @@
   let canvas, scroll;
   let panDrag = null;     // {startX,startY,ox,oy}
   let guideCreate = null; // 从标尺拖出参考线 {dir, index}
+  let clipboard = null;   // 文档内剪贴板 { shapes: [形状快照], pastes: 连续粘贴次数 }
 
   // ---------- 画布鼠标 ----------
   function clearHover() {
@@ -79,6 +80,23 @@
       VX.Tools.onDoubleClick(VX.Viewport.s2w(sc.x, sc.y), sc, e);
     });
 
+    // 画布右键：多选时组合 / 选中组合（或组编辑态）时取消组合
+    canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (S().editing) return;
+      const rect = canvas.getBoundingClientRect();
+      const sc = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const w = VX.Viewport.s2w(sc.x, sc.y);
+      const hit = VX.Hit.shapeAt(w.x, w.y);
+      // 点在未选中的形状上先单选它；点在已选中的形状或空白处保留当前多选
+      if (hit && !S().selection.includes(hit.id)) {
+        S().selection = [hit.id];
+        S().selGuides = [];
+        VX.Events.emit("selection");
+      }
+      openCanvasMenu(e.clientX, e.clientY);
+    });
+
     scroll.addEventListener("wheel", (e) => {
       e.preventDefault();
       if (e.ctrlKey) {
@@ -131,6 +149,15 @@
       if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "z") { e.preventDefault(); VX.History.undo(); return; }
       if ((e.ctrlKey && e.key.toLowerCase() === "y") || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); VX.History.redo(); return; }
       if (e.ctrlKey && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateSelection(); return; }
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "c") {
+        // 没选中图形（或在文本编辑中）时不拦截，保留浏览器原生复制
+        if (!S().editing && copySelection()) e.preventDefault();
+        return;
+      }
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "v") {
+        if (!S().editing && clipboard && clipboard.shapes.length) { e.preventDefault(); pasteClipboard(); }
+        return;
+      }
       if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); arrange("group"); return; }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); arrange("ungroup"); return; }
 
@@ -206,6 +233,28 @@
       S().selection = newIds;
     });
     VX.Events.emit("selection");
+  }
+
+  // ---------- 剪贴板：Ctrl+C / Ctrl+V ----------
+  // 存的是形状快照而非 id：复制后删掉原形状、切页、进动态面板状态，粘贴都还能用
+  function copySelection() {
+    const shapes = S().selection.map((id) => VX.Model.shape(id)).filter(Boolean);
+    if (!shapes.length) return false;
+    clipboard = { shapes: JSON.parse(JSON.stringify(shapes)), pastes: 0 };
+    return true;
+  }
+
+  function pasteClipboard() {
+    clipboard.pastes += 1;
+    const offset = 10 * clipboard.pastes;   // 连续粘贴逐次错开，避免副本完全重叠
+    VX.History.run("粘贴", () => {
+      S().selection = clipboard.shapes.map((src) => {
+        const c = VX.Model.insertShapeCopy(src, offset, offset);
+        return c ? c.id : null;
+      }).filter(Boolean);
+    });
+    VX.Events.emit("selection");
+    VX.Renderer.invalidate();
   }
 
   // ---------- 工具栏 / 缩放按钮 ----------
@@ -370,17 +419,44 @@
     });
   }
 
-  // ---------- 页面右键菜单 ----------
+  // ---------- 右键菜单（页面树 / 画布共用一套菜单 DOM） ----------
   let ctxMenuEl = null;
   function closeCtxMenu() {
     if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
   }
 
-  function openPageMenu(x, y, pageId) {
+  function showCtxMenu(x, y, items) {
     closeCtxMenu();
+    const menu = document.createElement("div");
+    menu.className = "ctx-menu";
+    for (const it of items) {
+      if (it.sep) {
+        const sep = document.createElement("div");
+        sep.className = "ctx-sep";
+        menu.appendChild(sep);
+        continue;
+      }
+      const row = document.createElement("div");
+      row.className = "ctx-item" + (it.disabled ? " disabled" : "");
+      row.textContent = it.text;
+      if (it.title) row.title = it.title;
+      if (!it.disabled) {
+        row.addEventListener("click", () => { closeCtxMenu(); it.act(); });
+      }
+      menu.appendChild(row);
+    }
+
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.min(x, window.innerWidth - rect.width - 8) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - rect.height - 8) + "px";
+    ctxMenuEl = menu;
+  }
+
+  function openPageMenu(x, y, pageId) {
     const pages = VX.Model.doc.pages;
     const idx = pages.findIndex((p) => p.id === pageId);
-    const items = [
+    showCtxMenu(x, y, [
       { text: "新增页面", act: () => VX.History.run("新建页面", () => VX.Model.addPage()) },
       { sep: true },
       {
@@ -406,31 +482,29 @@
         disabled: idx < 0 || idx >= pages.length - 1,
         act: () => VX.History.run("移动页面", () => VX.Model.movePage(pageId, 1)),
       },
-    ];
+    ]);
+  }
 
-    const menu = document.createElement("div");
-    menu.className = "ctx-menu";
-    for (const it of items) {
-      if (it.sep) {
-        const sep = document.createElement("div");
-        sep.className = "ctx-sep";
-        menu.appendChild(sep);
-        continue;
-      }
-      const row = document.createElement("div");
-      row.className = "ctx-item" + (it.disabled ? " disabled" : "");
-      row.textContent = it.text;
-      if (!it.disabled) {
-        row.addEventListener("click", () => { closeCtxMenu(); it.act(); });
-      }
-      menu.appendChild(row);
-    }
+  // 画布：多选时「组合」可用，选中组合（或处于组编辑态）时「取消组合」可用
+  function openCanvasMenu(x, y) {
+    // 组编辑态里选中的是子形状，组合要等退出该组后才有意义
+    const canGroup = arrangeEnabled("group") && !S().enterGroup;
+    const canUngroup = arrangeEnabled("ungroup") ||
+      !!(S().enterGroup && VX.Model.shape(S().enterGroup));
+    showCtxMenu(x, y, [
+      { text: "组合", title: "组合选中的对象 (Ctrl+G)", disabled: !canGroup, act: () => arrange("group") },
+      { text: "取消组合", title: "解除组合 (Ctrl+Shift+G)", disabled: !canUngroup, act: ungroupSelection },
+    ]);
+  }
 
-    document.body.appendChild(menu);
-    const rect = menu.getBoundingClientRect();
-    menu.style.left = Math.min(x, window.innerWidth - rect.width - 8) + "px";
-    menu.style.top = Math.min(y, window.innerHeight - rect.height - 8) + "px";
-    ctxMenuEl = menu;
+  function ungroupSelection() {
+    if (arrangeEnabled("ungroup")) { arrange("ungroup"); return; }
+    // 组编辑态里选中的是子形状，取消组合要作用于正在编辑的那个组
+    const gid = S().enterGroup;
+    if (!gid || !VX.Model.shape(gid)) return;
+    VX.History.run("解除组合", () => VX.Model.ungroup([gid]));
+    VX.Events.emit("selection");
+    VX.Renderer.invalidate();
   }
 
   function onCtxOutside(e) {
@@ -491,7 +565,10 @@
   }
 
   function updateStatus() {
-    document.getElementById("status-zoom").textContent = Math.round(S().zoom * 100) + "%";
+    const zoomText = Math.round(S().zoom * 100) + "%";
+    document.getElementById("status-zoom").textContent = zoomText;
+    // 工具栏中间的百分比与底部状态栏同源，缩放时一起刷新
+    document.getElementById("zoom-label").textContent = zoomText;
     document.getElementById("status-sel").textContent = String(S().selection.length);
     // 当前编辑的页面名：任何左侧页签下都能看到（切页 / 重命名 / 新建 / 删除都会刷新）
     const nameEl = document.getElementById("status-page-name");
